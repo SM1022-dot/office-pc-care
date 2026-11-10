@@ -1,0 +1,57 @@
+name: release
+
+# Any change to the toolkit source on main is built, signed and published.
+# Office PCs pick it up silently at their next Auto Care; Vercel redeploys the download page.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tools/build.py'
+      - 'tools/ci-sign.ps1'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    # The signing key lives only in this environment, which only the main branch may use.
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Deploy key with write access (bypasses the PR rule on main only for this bot commit).
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          persist-credentials: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build and sign
+        id: sign
+        shell: powershell
+        env:
+          SIGNING_KEY_XML: ${{ secrets.SIGNING_KEY_XML }}
+          RELEASE_NOTES: ${{ github.event.head_commit.message }}
+        run: ./tools/ci-sign.ps1
+
+      - name: Commit signed release
+        if: steps.sign.outputs.published == 'true'
+        shell: bash
+        env:
+          BUILD: ${{ steps.sign.outputs.build }}
+        run: |
+          git config user.name "office-pc-care-release"
+          git config user.email "340519724+SM1022-dot@users.noreply.github.com"
+          git add toolkit
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "release: build ${BUILD}"
+          git push origin HEAD:main

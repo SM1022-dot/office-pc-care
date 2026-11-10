@@ -1,0 +1,27 @@
+{
+  "chromeMemorySaverLevel": 1,
+  "chromeNeverRest": [
+    "web.whatsapp.com"
+  ],
+  "blockNewChromeExtensions": true,
+  "chromeExtensionAllowlist": [],
+  "servicesOff": [
+    "Spooler",
+    "XblAuthManager",
+    "XblGameSave",
+    "XboxNetApiSvc",
+    "XboxGipSvc",
+    "MapsBroker",
+    "Fax",
+    "RetailDemo"
+  ],
+  "servicesManual": [
+    "WerSvc"
+  ],
+  "slowStartDelaySeconds": 180,
+  "slowStartGapSeconds": 25,
+  "outlookOfflineMonths": 6,
+  "outlookDisableAllAddins": true,
+  "defenderQuickScanBdTime": "20:45",
+  "defenderCpuLimitPercent": 20
+}
