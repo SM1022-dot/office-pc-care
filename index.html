@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>PC Care Toolkit</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#ffffff; --text:#1d2330; --muted:#5b6475; --line:#e3e6ec; --brand:#1f6feb; --brand-dark:#1858c4; --ok:#1a7f37; --warn:#9a6700; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1218; --card:#171b23; --text:#e6e9ef; --muted:#9aa3b2; --line:#2a303c; --brand:#4c8dff; --brand-dark:#3b78e6; --ok:#3fb950; --warn:#d29922; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding:32px 16px; }
+  main { max-width:720px; margin:0 auto; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:22px; margin-bottom:16px; }
+  .btn { display:inline-block; background:var(--brand); color:#fff; text-decoration:none; font-weight:600; font-size:18px; padding:14px 26px; border-radius:10px; }
+  .btn:hover { background:var(--brand-dark); }
+  .meta { color:var(--muted); font-size:14px; margin-top:12px; }
+  ol { margin:0; padding-left:22px; }
+  li { margin:8px 0; }
+  h2 { font-size:18px; margin:0 0 12px; }
+  .ok { color:var(--ok); font-weight:600; }
+  .warn { color:var(--warn); font-weight:600; }
+  kbd { border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:1px 6px; font-size:14px; background:var(--bg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>PC Care Toolkit</h1>
+  <p class="sub">Fixes common office PC problems: slow PC, frozen apps, Outlook, Word, Excel, Viber, internet, VPN.</p>
+
+  <div class="card">
+    <a class="btn" href="/toolkit/PC-Care-Toolkit.bat" download="PC-Care-Toolkit.bat">Download PC Care Toolkit</a>
+    <div class="meta" id="build">Latest version</div>
+  </div>
+
+  <div class="card">
+    <h2>Install once (2 minutes)</h2>
+    <ol>
+      <li>Click <b>Download PC Care Toolkit</b>.</li>
+      <li>If Chrome says the file may be harmful: click <b>Keep</b>.</li>
+      <li>Open the downloaded file <b>PC-Care-Toolkit.bat</b>.</li>
+      <li>If you see <b>"Windows protected your PC"</b>: click <b>More info</b>, then <b>Run anyway</b>.</li>
+      <li>When Windows asks <b>"Do you want to allow this app to make changes?"</b>: click <b>Yes</b>.</li>
+      <li>Type <kbd>Y</kbd> and press <kbd>Enter</kbd> to set up the PC. Wait until it says it is finished.</li>
+      <li>Restart the PC once.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>After that</h2>
+    <p class="ok">You never need to download it again. It updates itself.</p>
+    <p>When you have a problem, double-click <b>PC Care</b> on your desktop, type the number of your problem and press <kbd>Enter</kbd>.</p>
+  </div>
+</main>
+<script>
+  fetch('/toolkit/manifest.json', { cache: 'no-store' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (m) {
+      if (m && m.build) {
+        var d = m.published ? new Date(m.published).toLocaleDateString() : '';
+        document.getElementById('build').textContent = 'Version: build ' + m.build + (d ? '  -  updated ' + d : '');
+      }
+    })
+    .catch(function () {});
+</script>
+</body>
+</html>
