@@ -2994,7 +2994,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '1'
+$script:BuildStamp     = '2'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3003,6 +3003,7 @@ $script:ConfigFile     = Join-Path $script:ToolRoot 'config.json'
 $script:BuildFile      = Join-Path $script:ToolRoot 'installed-build.txt'
 $script:SlowStartFile  = Join-Path $script:ToolRoot 'slow-start.json'
 $script:SlowStartScript = Join-Path $script:ToolRoot 'slow-start.ps1'
+$script:SlowStartLauncher = Join-Path $script:ToolRoot 'slow-start.vbs'
 $script:SlowStartTask  = 'Office PC Care Toolkit - Slow Start'
 $script:EarlyTask      = 'Office PC Care Toolkit - Early Boot'
 $script:ShortcutFile   = Join-Path $env:PUBLIC 'Desktop\PC Care.lnk'
@@ -3289,6 +3290,9 @@ foreach ($item in @($doc.items)) {
 }
 '@
     Set-Content -LiteralPath $script:SlowStartScript -Value ($runner.Replace('C:\ProgramData', $env:ProgramData)) -Encoding UTF8
+    # wscript starts PowerShell fully hidden (window style 0), so staff never see a console flash.
+    $vbs = 'CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""' + $script:SlowStartScript + '""", 0, False'
+    Set-Content -LiteralPath $script:SlowStartLauncher -Value $vbs -Encoding ASCII
     Register-SlowStartTask
     Write-Done ('Only Viber opens at sign-in. ' + @($items).Count + ' other startup app(s) open one by one after ' + [int](Get-Cfg 'slowStartDelaySeconds') + ' seconds' + $(if ($added) { ' (' + $added + ' newly moved)' } else { '' }) + '.')
 }
@@ -3307,14 +3311,14 @@ function Register-SlowStartTask {
         $t = $def.Triggers.Create(9)
         $t.Delay = 'PT' + [int](Get-Cfg 'slowStartDelaySeconds') + 'S'
         $a = $def.Actions.Create(0)
-        $a.Path = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $a.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $script:SlowStartScript + '"'
+        $a.Path = Join-Path $env:WINDIR 'System32\wscript.exe'
+        $a.Arguments = '//B //NoLogo "' + $script:SlowStartLauncher + '"'
         [void]$svc.GetFolder('\').RegisterTaskDefinition($script:SlowStartTask, $def, 6, $null, $null, 4)
     } catch { Write-Skip ('Slow start task could not be created: ' + $_.Exception.Message) }
 }
 function Restore-SlowStart {
     try { (Get-TaskService).GetFolder('\').DeleteTask($script:SlowStartTask, 0) } catch {}
-    Remove-Item -LiteralPath $script:SlowStartFile, $script:SlowStartScript -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $script:SlowStartFile, $script:SlowStartScript, $script:SlowStartLauncher -Force -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------------

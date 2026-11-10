@@ -1,11 +1,11 @@
 {
-    "build":  1,
-    "published":  "2026-11-10T17:41:34Z",
-    "notes":  "first release",
+    "build":  2,
+    "published":  "2026-11-10T17:56:57Z",
+    "notes":  "hidden slow start window",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "1f5b2a608ecef06a9a622cf421f97905b39ac186b3cc42fc21f2e0b6cd40589b"
+                      "sha256":  "45489bf9dbe47ae719a88c831beaaed55858db5d1e16664cd59ad05bc333e3a1"
                   },
                   {
                       "name":  "config.json",
