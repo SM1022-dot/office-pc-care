@@ -1,0 +1,15 @@
+{
+    "build":  1,
+    "published":  "2026-11-10T17:41:34Z",
+    "notes":  "first release",
+    "files":  [
+                  {
+                      "name":  "PC-Care-Toolkit.bat",
+                      "sha256":  "1f5b2a608ecef06a9a622cf421f97905b39ac186b3cc42fc21f2e0b6cd40589b"
+                  },
+                  {
+                      "name":  "config.json",
+                      "sha256":  "d4b73f349331ccbba2749fc379fc450a0f6bcf8c1eee20ef4f8dc226aaf64b25"
+                  }
+              ]
+}
