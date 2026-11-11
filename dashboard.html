@@ -171,6 +171,23 @@
       state.releases.slice().reverse().map(function (x) { return '<tr><td>' + esc(x.build) + '</td><td>' + bdTime(x.published) + '</td><td style="white-space:normal">' + esc(x.notes) + '</td></tr>'; }).join('');
   }
 
+  // Generic view of any report value: objects as key/value tables, lists of objects as tables.
+  function renderValue(v) {
+    if (v == null || v === '') return '<span class="muted">-</span>';
+    if (Array.isArray(v)) {
+      if (!v.length) return '<span class="muted">None</span>';
+      if (typeof v[0] === 'object' && v[0] !== null && !Array.isArray(v[0])) {
+        var cols = []; v.forEach(function (o) { Object.keys(o).forEach(function (k) { if (cols.indexOf(k) < 0) cols.push(k); }); });
+        return '<div class="tablewrap"><table><tr>' + cols.map(function (c) { return '<th>' + esc(c) + '</th>'; }).join('') + '</tr>' +
+          v.map(function (o) { return '<tr>' + cols.map(function (c) { var x = o[c]; return '<td style="white-space:normal">' + (x != null && typeof x === 'object' ? esc(JSON.stringify(x)) : esc(x)) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table></div>';
+      }
+      return v.map(function (x) { return '<span class="chip">' + esc(x) + '</span>'; }).join('');
+    }
+    if (typeof v === 'object') {
+      return '<table class="kv">' + Object.keys(v).map(function (k) { return '<tr><td>' + esc(k) + '</td><td>' + renderValue(v[k]) + '</td></tr>'; }).join('') + '</table>';
+    }
+    return esc(v);
+  }
   function kv(rows) { return '<table class="kv">' + rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td>' + r[1] + '</td></tr>'; }).join('') + '</table>'; }
   function list(items) { return items && items.length ? '<ul class="plain">' + items.map(function (i) { return '<li>' + i + '</li>'; }).join('') + '</ul>' : '<span class="muted">None</span>'; }
   function swDiff(oldR, newR) {
@@ -214,6 +231,8 @@
       ]) +
       '<h3>Windows</h3>' + kv([
         ['Windows', esc(w.name) + ' ' + esc(w.version) + ' (build ' + esc(w.build) + ')'],
+        ['Activation', esc(w.activation || '-')],
+        ['BIOS', esc((r.bios || {}).version || '-') + ' ' + esc((r.bios || {}).date || '') + ' <span class="muted">serial ' + esc((r.bios || {}).serial || '-') + '</span>'],
         ['Last start', bdTime(w.lastBoot) + ' (' + num(w.uptimeHours, 0) + ' h)'],
         compareRow('Toolkit build', r.build, pv ? pv.build : null),
         ['Setup done', s.setupDone ? '<span class="ok">Yes</span>' : '<span class="bad">No</span>'],
@@ -242,9 +261,16 @@
       diffBlock('Software changes since the toolkit was installed', f && f !== r ? swDiff(f, r) : null) +
       diffBlock('Software changes since the previous day', swDiff(pv, r)) +
       '<h3>Installed software (' + esc((r.software || []).length) + ')</h3>' + list((r.software || []).map(function (x) { return esc(x.name) + ' <span class="muted">' + esc(x.version) + '</span>'; })) +
-      '<h3>Chrome extensions</h3>' + ((r.chromeExtensions || []).length ? (r.chromeExtensions || []).map(function (x) { return '<span class="chip">' + esc(x) + '</span>'; }).join('') : '<span class="muted">None</span>');
+      '<h3>Chrome extensions</h3>' + ((r.chromeExtensions || []).length ? (r.chromeExtensions || []).map(function (x) { return '<span class="chip">' + esc(x) + '</span>'; }).join('') : '<span class="muted">None</span>') +
+      '<h3>Network</h3>' + list((r.network || []).map(function (n) { return '<b>' + esc(n.name) + '</b> - <span class="' + (n.status === 'Up' ? 'ok' : 'muted') + '">' + esc(n.status) + '</span> ' + esc(n.speed || '') + ' <span class="muted">' + esc(n.description) + '</span><br>IP ' + esc((n.ipv4 || []).join(', ') || '-') + '  |  DNS ' + esc((n.dns || []).join(', ') || '-') + '  |  MAC ' + esc(n.mac || '-'); })) +
+      '<div style="margin-top:16px"><button class="ghost" id="fullBtn">Show full report (everything this PC sent)</button></div><div id="fullReport" hidden></div>';
     var box = $('detail'); box.innerHTML = html; box.hidden = false; box.scrollIntoView({ behavior: 'smooth' });
     $('closeDetail').onclick = function () { box.hidden = true; };
+    $('fullBtn').onclick = function () {
+      var fr = $('fullReport');
+      if (fr.hidden) { fr.innerHTML = '<h3>Full report - ' + bdTime(r.time) + '</h3>' + renderValue(r); fr.hidden = false; $('fullBtn').textContent = 'Hide full report'; }
+      else { fr.hidden = true; $('fullBtn').textContent = 'Show full report (everything this PC sent)'; }
+    };
     $('labelForm').onsubmit = function (e) {
       e.preventDefault();
       $('lbMsg').textContent = 'Saving...';
