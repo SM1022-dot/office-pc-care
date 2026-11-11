@@ -1004,6 +1004,14 @@ function Get-BdDate { return [DateTime]::UtcNow.AddHours(6).ToString('yyyy-MM-dd
 function Get-PcReportData {
     $profile = Get-InteractiveProfile
     $r = [ordered]@{ kind = 'office-pc-care-report'; pc = $env:COMPUTERNAME; user = [string]$profile.UserName; reportDate = (Get-BdDate); time = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); build = (Get-InstalledBuild) }
+    # Helps IT tell whose PC it is: Windows account full name, IP address, PC time zone.
+    $r.userFullName = ''
+    try {
+        $short = ([string]$profile.UserName).Split('\')[-1]
+        if ($short) { $r.userFullName = [string]([ADSI]('WinNT://' + $env:COMPUTERNAME + '/' + $short + ',user')).FullName }
+    } catch {}
+    try { $r.ipv4 = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.InterfaceAlias -notmatch '(?i)vmware|virtual|vEthernet|loopback|vpn|tap|wintun' } | ForEach-Object { [string]$_.IPAddress }) } catch { $r.ipv4 = @() }
+    try { $r.timeZone = [string](Get-TimeZone).Id } catch { $r.timeZone = '' }
     try {
         $cs = Get-CimInstance Win32_ComputerSystem; $os = Get-CimInstance Win32_OperatingSystem
         $cpu = @(Get-CimInstance Win32_Processor)[0]; $bb = Get-CimInstance Win32_BaseBoard

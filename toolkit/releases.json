@@ -23,5 +23,10 @@
         "build":  5,
         "published":  "2026-11-11T12:55:51Z",
         "notes":  "IT dashboard: PCs send a daily report"
+    },
+    {
+        "build":  6,
+        "published":  "2026-11-11T15:36:01Z",
+        "notes":  "Dashboard: person/desk/team labels, search; report adds full name, IP, time zone"
     }
 ]

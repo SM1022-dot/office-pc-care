@@ -1,11 +1,11 @@
 {
-    "build":  5,
-    "published":  "2026-11-11T12:55:50Z",
-    "notes":  "IT dashboard: PCs send a daily report",
+    "build":  6,
+    "published":  "2026-11-11T15:36:01Z",
+    "notes":  "Dashboard: person/desk/team labels, search; report adds full name, IP, time zone",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "451c6504191cf53affa65f009ae536350a144019e485ad9d6f1b616265075b38"
+                      "sha256":  "f2de745b10426f87075fa0a82b2b6bfd74791ef18b9d5bc206fea81d0b70b417"
                   },
                   {
                       "name":  "config.json",
