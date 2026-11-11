@@ -218,7 +218,7 @@
         compareRow('Toolkit build', r.build, pv ? pv.build : null),
         ['Setup done', s.setupDone ? '<span class="ok">Yes</span>' : '<span class="bad">No</span>'],
         ['Windows Update', esc(s.wuStart)], ['Edge blocked', s.edgeOff ? 'Yes' : 'No'],
-        ['Tasks', 'Auto Care ' + (s.autoCareTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>') + ', Viber first ' + (s.viberTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>') + ', Slow start ' + (s.slowStartTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>')]
+        ['Tasks', 'Auto Care ' + (s.autoCareTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>') + ', Viber first ' + (s.viberTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>') + ', Slow start ' + (s.slowStartTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>') + ', Update check (15 min) ' + (s.updateTask ? '<span class="ok">on</span>' : '<span class="warn">not yet</span>')]
       ]) +
       '<h3>VPN and VM</h3>' + kv([
         ['VPN adapters', list((r.vpn || []).map(function (x) { return esc(x.name) + ' - <span class="' + (x.status === 'Up' ? 'ok' : 'muted') + '">' + esc(x.status) + '</span>'; }))],

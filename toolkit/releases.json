@@ -38,5 +38,10 @@
         "build":  8,
         "published":  "2026-11-11T15:43:18Z",
         "notes":  "PCs report right after updating, so the dashboard shows the new build at once"
+    },
+    {
+        "build":  9,
+        "published":  "2026-11-11T15:46:43Z",
+        "notes":  "Silent update check every 15 minutes: new builds reach every PC within 15 minutes"
     }
 ]

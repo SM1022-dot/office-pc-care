@@ -1067,6 +1067,7 @@ function Get-PcReportData {
         setupDone = (Test-Path -LiteralPath $script:SetupMarker); updatesOff = [bool](Get-UndoFlag 'UpdatesOff'); edgeOff = [bool](Get-UndoFlag 'EdgeOff')
         wuStart = $(if ($wu) { [string]$wu.StartType } else { 'missing' })
         autoCareTask = (& $hasTask $script:TaskName); viberTask = (& $hasTask $script:ViberTask); slowStartTask = (& $hasTask $script:SlowStartTask)
+        updateTask = (& $hasTask 'Office PC Care Toolkit - Update Check')
     }
     $r.chromeExtensions = @(Get-InstalledChromeExtensions)
     return $r
@@ -1111,6 +1112,7 @@ function Invoke-UndoAll {
     Unregister-AutoCareTask
     try { (Get-TaskService).GetFolder('\').DeleteTask($script:ViberTask, 0) } catch {}
     try { (Get-TaskService).GetFolder('\').DeleteTask($script:EarlyTask, 0) } catch {}
+    try { (Get-TaskService).GetFolder('\').DeleteTask('Office PC Care Toolkit - Update Check', 0) } catch {}
     Restore-SlowStart
     Remove-Item -LiteralPath $script:ShortcutFile -Force -ErrorAction SilentlyContinue
     foreach ($v in @(Get-UndoFlag 'VmxBackups')) {
@@ -1572,6 +1574,31 @@ function Remove-VmwareTuning {
     Set-UndoFlag 'VMwareConfig' $null
     if ($n -gt 0) { Write-Done ('VMware memory settings returned to normal in ' + $n + ' file(s).') }
 }
+$script:UpdateTask = 'Office PC Care Toolkit - Update Check'
+function Register-UpdateCheckTask {
+    # Every 15 minutes, silently (SYSTEM, no window): download the small signed manifest; only when IT has
+    # published a newer build, install it and run Auto Care with the new code. Nothing is shown to staff.
+    if (-not (Install-ToolkitCopy)) { return }
+    try {
+        $svc = Get-TaskService
+        $def = New-ToolkitTaskDefinition -Service $svc -Mode 'update'
+        $def.Settings.ExecutionTimeLimit = 'PT30M'
+        $def.Settings.Hidden = $true
+        $t = $def.Triggers.Create(1)
+        $t.StartBoundary = (Get-Date).AddMinutes(5).ToString('yyyy-MM-ddTHH:mm:ss')
+        $t.Repetition.Interval = 'PT15M'
+        [void]$svc.GetFolder('\').RegisterTaskDefinition($script:UpdateTask, $def, 6, 'SYSTEM', $null, 5)
+    } catch { Write-Skip ('Update check task could not be created: ' + $_.Exception.Message) }
+}
+function Invoke-UpdateCheck {
+    $updated = Invoke-SelfUpdate
+    if ($updated -eq $true -and (Test-Path -LiteralPath $script:InstalledBat)) {
+        $env:PCTOOLKIT_CHAINED = '1'
+        Start-Process -FilePath (Join-Path $env:WINDIR 'System32\cmd.exe') -ArgumentList ('/d /c ""' + $script:InstalledBat + '" auto"') -WindowStyle Hidden -Wait
+        return $true
+    }
+    return $false
+}
 function Invoke-EarlyBoot {
     Write-Header ('EARLY BOOT ' + (Get-Date -Format 'yyyy-MM-dd HH:mm'))
     [void](Ensure-VmwareServices)
@@ -1608,6 +1635,7 @@ function Invoke-ApplyAll {
     [void](Ensure-VmwareServices)
     Remove-VmwareTuning
     [void](Restore-Tracked { param($id) $id -match 'HiberbootEnabled' })
+    if (Test-Path -LiteralPath $script:SetupMarker) { Register-UpdateCheckTask }
 }
 function Invoke-OneTimeSetup {
     Write-Header 'PC SETUP'
@@ -1635,6 +1663,7 @@ function Invoke-OneTimeSetup {
     Write-Step '[7/7] Automatic care and updates'
     if (Register-AutoCareTask) { Write-Done 'Auto Care runs 10 minutes after the PC starts, and every day at 3:30 PM and 8:30 PM Bangladesh time. It also installs updates sent by IT.' }
     Register-EarlyBootTask
+    Register-UpdateCheckTask
     Set-Content -LiteralPath $script:SetupMarker -Value (Get-Date -Format 's') -Encoding ASCII
     Write-Host ''
     Write-Host 'PC setup finished. Restart the PC once to finish.' -ForegroundColor Green
@@ -1792,6 +1821,13 @@ switch ($script:Mode) {
     'edge-on'   { Set-EdgeOn; [void](Read-Host 'Press Enter to close'); exit 0 }
     'update-on' { try { [void](Invoke-AsSystem 'wu-on') } catch { Set-WindowsUpdateOn }; [void](Read-Host 'Press Enter to close'); exit 0 }
     'early'  { Invoke-EarlyBoot; try { Stop-Transcript | Out-Null } catch {}; exit 0 }
+    'update' {
+        $changed = Invoke-UpdateCheck
+        try { Stop-Transcript | Out-Null } catch {}
+        # Nothing new: do not keep a log file every 15 minutes.
+        if (-not $changed) { Remove-Item -LiteralPath $script:LogFile -Force -ErrorAction SilentlyContinue }
+        exit 0
+    }
     'allow-extension' { Add-LocalChromeExtension $script:ExtraArg; [void](Read-Host 'Press Enter to close'); exit 0 }
     'test'   { return }
 }
