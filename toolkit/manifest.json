@@ -1,11 +1,11 @@
 {
-    "build":  4,
-    "published":  "2026-11-11T12:36:14Z",
-    "notes":  "Viber opens maximized at once; Fast Startup back on",
+    "build":  5,
+    "published":  "2026-11-11T12:55:50Z",
+    "notes":  "IT dashboard: PCs send a daily report",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "4a856dae4c7e32a6220e9a4948ab71e1bfe72defbd3762531954d2926c01a015"
+                      "sha256":  "451c6504191cf53affa65f009ae536350a144019e485ad9d6f1b616265075b38"
                   },
                   {
                       "name":  "config.json",

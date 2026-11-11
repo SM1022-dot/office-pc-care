@@ -2964,13 +2964,95 @@ function New-ITReport([string]$OutDir = '') {
     [IO.File]::WriteAllLines($file, $L, (New-Object System.Text.UTF8Encoding($true)))
     return $file
 }
+# ---------------------------------------------------------------------
+# Daily report to the IT dashboard (https://office-pc-care.vercel.app/dashboard)
+# ---------------------------------------------------------------------
+$script:ReportUrl = 'https://office-pc-care.vercel.app/api/report'
+$script:ReportDateFile = Join-Path $script:ToolRoot 'last-report-date.txt'
+function Get-BdDate { return [DateTime]::UtcNow.AddHours(6).ToString('yyyy-MM-dd') }
+function Get-PcReportData {
+    $profile = Get-InteractiveProfile
+    $r = [ordered]@{ kind = 'office-pc-care-report'; pc = $env:COMPUTERNAME; user = [string]$profile.UserName; reportDate = (Get-BdDate); time = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); build = (Get-InstalledBuild) }
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem; $os = Get-CimInstance Win32_OperatingSystem
+        $cpu = @(Get-CimInstance Win32_Processor)[0]; $bb = Get-CimInstance Win32_BaseBoard
+        $slots = 0; try { $slots = [int](@(Get-CimInstance Win32_PhysicalMemoryArray) | Measure-Object -Property MemoryDevices -Sum).Sum } catch {}
+        $disks = @()
+        try { $disks = @(Get-PhysicalDisk -ErrorAction Stop | ForEach-Object { [ordered]@{ name = [string]$_.FriendlyName; type = [string]$_.MediaType; gb = [int]($_.Size / 1GB); health = [string]$_.HealthStatus } }) }
+        catch { $disks = @(Get-CimInstance Win32_DiskDrive | ForEach-Object { [ordered]@{ name = [string]$_.Model; type = ''; gb = [int]($_.Size / 1GB); health = [string]$_.Status } }) }
+        $r.hardware = [ordered]@{
+            cpu = ([string]$cpu.Name).Trim(); cores = [int]$cpu.NumberOfCores; threads = [int]$cpu.NumberOfLogicalProcessors
+            board = ([string]$bb.Manufacturer + ' ' + [string]$bb.Product).Trim(); model = ([string]$cs.Manufacturer + ' ' + [string]$cs.Model).Trim()
+            ramGB = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1); ramSlots = $slots
+            ramSticks = @(Get-CimInstance Win32_PhysicalMemory | ForEach-Object { [ordered]@{ slot = [string]$_.BankLabel; gb = [int]($_.Capacity / 1GB); mhz = [int]$_.Speed; part = ([string]$_.PartNumber).Trim() } })
+            disks = $disks
+            drives = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { [ordered]@{ id = [string]$_.DeviceID; freeGB = [math]::Round($_.FreeSpace / 1GB, 1); sizeGB = [math]::Round($_.Size / 1GB, 1) } })
+            gpu = (@(Get-CimInstance Win32_VideoController | ForEach-Object { [string]$_.Name }) -join ', ')
+        }
+        $r.windows = [ordered]@{ name = [string]$os.Caption; version = [string]$os.Version; build = [string]$os.BuildNumber; installDate = $os.InstallDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); lastBoot = $os.LastBootUpTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); uptimeHours = [math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 1) }
+        $pf = @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue)
+        $r.memory = [ordered]@{ totalGB = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1); freeGB = [math]::Round($os.FreePhysicalMemory / 1MB, 1); commitUsedGB = [math]::Round(($os.TotalVirtualMemorySize - $os.FreeVirtualMemory) / 1MB, 1); commitTotalGB = [math]::Round($os.TotalVirtualMemorySize / 1MB, 1); pagefileMB = [int](($pf | Measure-Object -Property AllocatedBaseSize -Sum).Sum) }
+    } catch {}
+    $r.topApps = @(Get-Process -ErrorAction SilentlyContinue | Group-Object ProcessName | ForEach-Object { [ordered]@{ name = $_.Name; mb = [int](($_.Group | Measure-Object WorkingSet64 -Sum).Sum / 1MB); count = $_.Count } } | Sort-Object { $_.mb } -Descending | Select-Object -First 12)
+    $startup = @()
+    $runKeys = @('Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run', 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run')
+    if ($profile.SID) { $runKeys += ('Registry::HKEY_USERS\' + $profile.SID + '\Software\Microsoft\Windows\CurrentVersion\Run') }
+    foreach ($k in $runKeys) { if (Test-Path -LiteralPath $k) { $startup += @((Get-Item -LiteralPath $k).GetValueNames()) } }
+    $r.startupNow = @($startup | Where-Object { $_ } | Select-Object -Unique)
+    $r.slowStart = @(Get-SlowStartList | ForEach-Object { [string]$_.name })
+    $r.software = @(Get-InstalledSoftware | ForEach-Object { [ordered]@{ name = $_.Name; version = $_.Version; publisher = $_.Publisher } })
+    $bs = @()
+    try { $bs = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 41, 1001; StartTime = (Get-Date).AddDays(-30) } -ErrorAction Stop | Where-Object { $_.Id -eq 41 -or $_.ProviderName -match 'WER-SystemErrorReporting|BugCheck' }) } catch {}
+    $apps = @()
+    try { $apps = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000, 1002; StartTime = (Get-Date).AddDays(-7) } -ErrorAction Stop | Group-Object { [string]$_.Properties[0].Value } | Sort-Object Count -Descending | Select-Object -First 10 | ForEach-Object { [ordered]@{ app = $_.Name; count = $_.Count } }) } catch {}
+    $r.crashes = [ordered]@{
+        blueScreens30d = $bs.Count
+        lastBlueScreens = @($bs | Select-Object -First 5 | ForEach-Object { $msg = ([string]$_.Message -split "`r?`n")[0]; if ($msg.Length -gt 160) { $msg = $msg.Substring(0, 160) }; [ordered]@{ time = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); id = $_.Id; msg = $msg } })
+        appCrashes7d = $apps
+    }
+    $mail = @()
+    if ($profile.LocalPath) {
+        foreach ($f in @((Join-Path $profile.LocalPath 'AppData\Local\Microsoft\Outlook'), (Join-Path $profile.LocalPath 'Documents\Outlook Files'))) {
+            $mail += @(Get-ChildItem -LiteralPath $f -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '(?i)^\.(ost|pst)$' } | ForEach-Object { [ordered]@{ name = $_.Name; mb = [int]($_.Length / 1MB) } })
+        }
+    }
+    $olExe = Find-OutlookExe
+    $r.outlook = [ordered]@{ version = $(if ($olExe) { [string](Get-Item -LiteralPath $olExe).VersionInfo.ProductVersion } else { '' }); mailFiles = $mail; totalMB = [int](($mail | ForEach-Object { $_.mb } | Measure-Object -Sum).Sum) }
+    try { $r.vpn = @(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.InterfaceDescription -match '(?i)vpn|tap-|wintun|wireguard|nord|express|lightway' } | ForEach-Object { [ordered]@{ name = [string]$_.Name; status = [string]$_.Status } }) } catch { $r.vpn = @() }
+    $vmx = @(Get-Process -Name 'vmware-vmx' -ErrorAction SilentlyContinue)
+    $r.vm = [ordered]@{ running = ($vmx.Count -gt 0); memMB = [int](($vmx | Measure-Object WorkingSet64 -Sum).Sum / 1MB) }
+    $root = $null; try { $root = (Get-TaskService).GetFolder('\') } catch {}
+    $hasTask = { param($n) try { [void]$root.GetTask($n); $true } catch { $false } }
+    $wu = Get-Service -Name 'wuauserv' -ErrorAction SilentlyContinue
+    $r.settings = [ordered]@{
+        setupDone = (Test-Path -LiteralPath $script:SetupMarker); updatesOff = [bool](Get-UndoFlag 'UpdatesOff'); edgeOff = [bool](Get-UndoFlag 'EdgeOff')
+        wuStart = $(if ($wu) { [string]$wu.StartType } else { 'missing' })
+        autoCareTask = (& $hasTask $script:TaskName); viberTask = (& $hasTask $script:ViberTask); slowStartTask = (& $hasTask $script:SlowStartTask)
+    }
+    $r.chromeExtensions = @(Get-InstalledChromeExtensions)
+    return $r
+}
+function Send-PcReport([switch]$Force) {
+    if (-not $Force -and (Test-Path -LiteralPath $script:ReportDateFile) -and ((Get-Content -LiteralPath $script:ReportDateFile -Raw).Trim() -eq (Get-BdDate))) { return }
+    try {
+        $json = (Get-PcReportData) | ConvertTo-Json -Depth 6 -Compress
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
+        $wc = New-Object Net.WebClient
+        $wc.Encoding = [Text.Encoding]::UTF8
+        $wc.Headers['Content-Type'] = 'application/json; charset=utf-8'
+        try { [void]$wc.UploadString($script:ReportUrl, 'POST', $json) } finally { $wc.Dispose() }
+        Set-Content -LiteralPath $script:ReportDateFile -Value (Get-BdDate) -Encoding ASCII
+        Write-Done 'PC report sent to the IT dashboard.'
+    } catch { Write-Skip ('PC report not sent now (will retry at the next Auto Care): ' + $_.Exception.Message) }
+}
 function Invoke-SendReportToIT {
     Write-Header 'SEND REPORT TO IT'
-    Show-ActionInfo 'Creates a PC info file for IT: hardware, Windows, installed apps, recent errors.' 'No personal files, passwords, emails, chats or browsing history are included.' 'Nothing. This only reads information.' 'About 30 seconds.'
+    Show-ActionInfo 'Sends PC info to the IT dashboard and saves a copy on the desktop: hardware, Windows, installed apps, recent errors.' 'No personal files, passwords, emails, chats or browsing history are included.' 'Nothing. This only reads information.' 'About 30 seconds.'
     Write-Host 'Collecting information...' -ForegroundColor Cyan
+    Send-PcReport -Force
     $file = New-ITReport
     Write-Done ('Report saved: ' + $file)
-    Write-Host 'Send this file to IT on Viber. The folder is opening now.' -ForegroundColor Cyan
+    Write-Host 'IT can already see it on the dashboard. The folder is opening now.' -ForegroundColor Cyan
     try { [void](Start-UserProgram -Path (Join-Path $env:WINDIR 'explorer.exe') -Arguments ('/select,"' + $file + '"')) } catch {}
 }
 
@@ -3020,7 +3102,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '4'
+$script:BuildStamp     = '5'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3484,7 +3566,7 @@ function Invoke-ApplyAll {
 }
 function Invoke-OneTimeSetup {
     Write-Header 'PC SETUP'
-    Show-ActionInfo 'Sets this PC up for office work: faster Windows, only Viber at sign-in and other apps slowly after, Windows Update off, Edge off, lighter Chrome and Outlook, daily automatic care and updates from IT.' 'Files, emails, Viber chats, VPN apps, the VM, browser passwords, bookmarks and extensions already installed.' 'Nothing. Some changes need one restart.' 'About 3-5 minutes.'
+    Show-ActionInfo 'Sets this PC up for office work: faster Windows, only Viber at sign-in and other apps slowly after, Windows Update off, Edge off, lighter Chrome and Outlook, daily automatic care and updates from IT. Once a day it sends PC info (hardware, apps, errors) to the IT dashboard.' 'Files, emails, Viber chats, VPN apps, the VM, browser passwords, bookmarks and extensions already installed.' 'Nothing. Some changes need one restart.' 'About 3-5 minutes.'
     Write-MajorWarning 'Windows Update will be OFF: Windows will not get new security updates. Virus definitions still update every day.'
     if (-not (Ask-YesNo 'Set up this PC now?')) { Write-Host 'Cancelled. Nothing was changed.' -ForegroundColor Yellow; return }
     Write-Step '[1/7] Installing the toolkit'
@@ -3523,6 +3605,7 @@ function Invoke-AutoCare {
     if (Get-UndoFlag 'UpdatesOff') { Set-WindowsUpdateOff }
     if (Get-UndoFlag 'EdgeOff') { [void](Set-EdgeOff) }
     Update-DefenderSignatures
+    Send-PcReport
 }
 function Show-InternetMenu {
     while ($true) {

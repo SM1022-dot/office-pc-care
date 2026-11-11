@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>PC Care Dashboard</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c2230; --muted:#5d6678; --line:#e2e5eb; --brand:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; --chip:#eef1f5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e1116; --card:#161b22; --text:#e6e9ef; --muted:#97a0b0; --line:#2a313c; --brand:#4c8dff; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --chip:#21262d; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:24px 16px; }
+  main { max-width:1200px; margin:0 auto; }
+  h1 { font-size:22px; margin:0; } h2 { font-size:16px; margin:0 0 10px; } h3 { font-size:14px; margin:14px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .top { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .muted { color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:16px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .stat b { display:block; font-size:24px; }
+  .tablewrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  tr.row { cursor:pointer; } tr.row:hover td { background:var(--chip); }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  .chip { display:inline-block; background:var(--chip); border-radius:999px; padding:1px 8px; margin:2px 4px 2px 0; font-size:12px; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
+  .kv td:first-child { color:var(--muted); width:42%; }
+  .kv td { white-space:normal; }
+  button, input { font:inherit; }
+  button { background:var(--brand); color:#fff; border:0; border-radius:8px; padding:8px 14px; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button.danger { background:var(--bad); }
+  input[type=password] { padding:9px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); width:260px; max-width:100%; }
+  .login { max-width:420px; margin:80px auto; }
+  ul.plain { margin:0; padding-left:18px; } ul.plain li { margin:2px 0; }
+  .added { color:var(--ok); } .removed { color:var(--bad); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="login" class="card login">
+    <h1>PC Care Dashboard</h1>
+    <p class="muted">IT only. Enter the dashboard password.</p>
+    <form id="loginForm">
+      <input type="password" id="pw" autocomplete="current-password" placeholder="Password" required>
+      <button type="submit">Open</button>
+    </form>
+    <p id="loginMsg" class="bad"></p>
+  </section>
+
+  <section id="app" hidden>
+    <div class="top">
+      <div><h1>PC Care Dashboard</h1><div class="muted" id="updated"></div></div>
+      <div><button class="ghost" id="refresh">Refresh</button> <button class="ghost" id="logout">Lock</button></div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="card">
+      <h2>Office PCs</h2>
+      <div class="tablewrap"><table id="pcTable"></table></div>
+      <p class="muted" id="empty" hidden>No PC has sent a report yet. PCs send one report per day after setup (or from menu 9).</p>
+    </div>
+    <div class="card" id="detail" hidden></div>
+    <div class="card">
+      <h2>Toolkit releases</h2>
+      <div class="tablewrap"><table id="releases"></table></div>
+    </div>
+  </section>
+</main>
+<script>
+(function () {
+  var state = { data: null, latestBuild: 0, releases: [] };
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function pw() { try { return sessionStorage.getItem('pccare-pw') || ''; } catch (e) { return ''; } }
+  function setPw(v) { try { if (v) sessionStorage.setItem('pccare-pw', v); else sessionStorage.removeItem('pccare-pw'); } catch (e) {} }
+  function bdTime(iso) {
+    if (!iso) return '';
+    var d = new Date(iso); if (isNaN(d)) return esc(iso);
+    return d.toLocaleString('en-GB', { timeZone: 'Asia/Dhaka', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' BD';
+  }
+  function ago(iso) {
+    var d = new Date(iso); if (isNaN(d)) return '';
+    var h = (Date.now() - d.getTime()) / 36e5;
+    if (h < 1) return Math.max(1, Math.round(h * 60)) + ' min ago';
+    if (h < 48) return Math.round(h) + ' h ago';
+    return Math.round(h / 24) + ' days ago';
+  }
+  function num(v, d) { return v == null || isNaN(v) ? '-' : Number(v).toFixed(d == null ? 1 : d); }
+  function cDrive(r) { var c = ((r.hardware || {}).drives || []).filter(function (x) { return x.id === 'C:'; })[0]; return c || null; }
+  function cls(ok, warn) { return ok ? 'ok' : (warn ? 'warn' : 'bad'); }
+
+  function api(method, path) {
+    return fetch(path, { method: method, headers: { Authorization: 'Bearer ' + pw() }, cache: 'no-store' })
+      .then(function (r) { if (r.status === 401) throw new Error('wrong password'); if (!r.ok) throw new Error('server error ' + r.status); return r.json(); });
+  }
+
+  function load() {
+    $('updated').textContent = 'Loading...';
+    Promise.all([
+      api('GET', '/api/data'),
+      fetch('/toolkit/manifest.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }),
+      fetch('/toolkit/releases.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; })
+    ]).then(function (res) {
+      state.data = res[0]; state.latestBuild = Number(res[1].build || 0); state.releases = res[2] || [];
+      $('login').hidden = true; $('app').hidden = false;
+      render();
+    }).catch(function (e) {
+      if (String(e.message).indexOf('wrong password') >= 0) { setPw(''); $('app').hidden = true; $('login').hidden = false; $('loginMsg').textContent = 'Wrong password.'; }
+      else { $('updated').textContent = 'Could not load: ' + e.message; }
+    });
+  }
+
+  function render() {
+    var pcs = (state.data.pcs || []).filter(function (p) { return p.latest; });
+    var today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' });
+    var seenToday = pcs.filter(function (p) { return p.latest.reportDate === today; }).length;
+    var onLatest = pcs.filter(function (p) { return Number(p.latest.build) >= state.latestBuild; }).length;
+    var bsod = pcs.filter(function (p) { return ((p.latest.crashes || {}).blueScreens30d || 0) > 0; }).length;
+    var lowDisk = pcs.filter(function (p) { var c = cDrive(p.latest); return c && c.freeGB < 15; }).length;
+    $('updated').textContent = 'Updated ' + bdTime(state.data.generated) + '  -  latest toolkit build ' + state.latestBuild;
+    $('stats').innerHTML = [
+      ['PCs with toolkit', pcs.length, ''],
+      ['Reported today', seenToday, seenToday === pcs.length ? 'ok' : 'warn'],
+      ['On latest build', onLatest + ' / ' + pcs.length, onLatest === pcs.length ? 'ok' : 'warn'],
+      ['Blue screens (30 days)', bsod + ' PC', bsod ? 'bad' : 'ok'],
+      ['C: under 15 GB free', lowDisk + ' PC', lowDisk ? 'warn' : 'ok']
+    ].map(function (s) { return '<div class="stat"><span class="muted">' + esc(s[0]) + '</span><b class="' + s[2] + '">' + esc(s[1]) + '</b></div>'; }).join('');
+
+    $('empty').hidden = pcs.length > 0;
+    var head = '<tr><th>PC</th><th>User</th><th>Build</th><th>Last report</th><th>Running for</th><th>RAM free</th><th>C: free</th><th>Outlook mail</th><th>Blue screens 30d</th><th>App crashes 7d</th></tr>';
+    $('pcTable').innerHTML = head + pcs.map(function (p) {
+      var r = p.latest, m = r.memory || {}, c = cDrive(r), cr = r.crashes || {};
+      var appCr = (cr.appCrashes7d || []).reduce(function (a, x) { return a + (x.count || 0); }, 0);
+      var buildCls = Number(r.build) >= state.latestBuild ? 'ok' : 'warn';
+      return '<tr class="row" data-pc="' + esc(p.pc) + '"><td><b>' + esc(p.pc) + '</b></td><td>' + esc((r.user || '').split('\\').pop()) + '</td>' +
+        '<td class="' + buildCls + '">' + esc(r.build) + '</td><td>' + esc(ago(r.time)) + '<div class="muted">' + bdTime(r.time) + '</div></td>' +
+        '<td>' + num((r.windows || {}).uptimeHours, 0) + ' h</td>' +
+        '<td class="' + cls(m.freeGB >= 2, m.freeGB >= 1) + '">' + num(m.freeGB) + ' / ' + num(m.totalGB, 0) + ' GB</td>' +
+        '<td class="' + (c ? cls(c.freeGB >= 25, c.freeGB >= 15) : '') + '">' + (c ? num(c.freeGB, 0) + ' GB' : '-') + '</td>' +
+        '<td>' + num(((r.outlook || {}).totalMB || 0) / 1024) + ' GB</td>' +
+        '<td class="' + ((cr.blueScreens30d || 0) ? 'bad' : 'ok') + '">' + esc(cr.blueScreens30d || 0) + '</td>' +
+        '<td class="' + (appCr ? 'warn' : 'ok') + '">' + appCr + '</td></tr>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('tr.row'), function (tr) { tr.onclick = function () { showDetail(tr.getAttribute('data-pc')); }; });
+
+    $('releases').innerHTML = '<tr><th>Build</th><th>Published</th><th>What changed</th></tr>' +
+      state.releases.slice().reverse().map(function (x) { return '<tr><td>' + esc(x.build) + '</td><td>' + bdTime(x.published) + '</td><td style="white-space:normal">' + esc(x.notes) + '</td></tr>'; }).join('');
+  }
+
+  function kv(rows) { return '<table class="kv">' + rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td>' + r[1] + '</td></tr>'; }).join('') + '</table>'; }
+  function list(items) { return items && items.length ? '<ul class="plain">' + items.map(function (i) { return '<li>' + i + '</li>'; }).join('') + '</ul>' : '<span class="muted">None</span>'; }
+  function swDiff(oldR, newR) {
+    if (!oldR || !newR) return null;
+    var key = function (s) { return s.name + ' ' + (s.version || ''); };
+    var o = {}, n = {};
+    (oldR.software || []).forEach(function (s) { o[key(s)] = s; });
+    (newR.software || []).forEach(function (s) { n[key(s)] = s; });
+    var added = Object.keys(n).filter(function (k) { return !o[k]; }).sort();
+    var removed = Object.keys(o).filter(function (k) { return !n[k]; }).sort();
+    return { added: added, removed: removed };
+  }
+  function diffBlock(title, d) {
+    if (!d) return '<h3>' + esc(title) + '</h3><span class="muted">Not enough reports yet.</span>';
+    if (!d.added.length && !d.removed.length) return '<h3>' + esc(title) + '</h3><span class="muted">No software changes.</span>';
+    return '<h3>' + esc(title) + '</h3>' + list(d.added.map(function (x) { return '<span class="added">+ ' + esc(x) + '</span>'; }).concat(d.removed.map(function (x) { return '<span class="removed">- ' + esc(x) + '</span>'; })));
+  }
+  function compareRow(label, a, b) { return [label, esc(a) + (a !== b && b != null && b !== '' ? ' <span class="muted">(was ' + esc(b) + ')</span>' : '')]; }
+
+  function showDetail(name) {
+    var p = (state.data.pcs || []).filter(function (x) { return x.pc === name; })[0]; if (!p || !p.latest) return;
+    var r = p.latest, f = p.first, pv = p.previous, hw = r.hardware || {}, w = r.windows || {}, m = r.memory || {}, s = r.settings || {}, cr = r.crashes || {}, ol = r.outlook || {};
+    var html = '<div class="top"><h2>' + esc(p.pc) + ' <span class="muted">' + esc(r.user || '') + '</span></h2><div><button class="ghost" id="closeDetail">Close</button> <button class="danger" id="deletePc">Remove from dashboard</button></div></div>';
+    html += '<div class="grid2"><div>' +
+      '<h3>Hardware</h3>' + kv([
+        ['CPU', esc(hw.cpu) + ' <span class="muted">(' + esc(hw.cores) + ' cores / ' + esc(hw.threads) + ' threads)</span>'],
+        ['Motherboard', esc(hw.board)], ['PC model', esc(hw.model)],
+        ['RAM', num(hw.ramGB) + ' GB in ' + esc((hw.ramSticks || []).length) + ' of ' + esc(hw.ramSlots) + ' slots'],
+        ['RAM sticks', list((hw.ramSticks || []).map(function (x) { return esc(x.slot) + ': ' + esc(x.gb) + ' GB ' + esc(x.mhz) + ' MHz ' + esc(x.part); }))],
+        ['Disks', list((hw.disks || []).map(function (x) { return esc(x.name) + ' | ' + esc(x.type) + ' | ' + esc(x.gb) + ' GB | <span class="' + (x.health === 'Healthy' || x.health === 'OK' ? 'ok' : 'bad') + '">' + esc(x.health) + '</span>'; }))],
+        ['Drives', list((hw.drives || []).map(function (x) { return esc(x.id) + ' ' + num(x.freeGB, 0) + ' GB free of ' + num(x.sizeGB, 0); }))],
+        ['Graphics', esc(hw.gpu)]
+      ]) +
+      '<h3>Windows</h3>' + kv([
+        ['Windows', esc(w.name) + ' ' + esc(w.version) + ' (build ' + esc(w.build) + ')'],
+        ['Last start', bdTime(w.lastBoot) + ' (' + num(w.uptimeHours, 0) + ' h)'],
+        compareRow('Toolkit build', r.build, pv ? pv.build : null),
+        ['Setup done', s.setupDone ? '<span class="ok">Yes</span>' : '<span class="bad">No</span>'],
+        ['Windows Update', esc(s.wuStart)], ['Edge blocked', s.edgeOff ? 'Yes' : 'No'],
+        ['Tasks', 'Auto Care ' + (s.autoCareTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>') + ', Viber first ' + (s.viberTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>') + ', Slow start ' + (s.slowStartTask ? '<span class="ok">on</span>' : '<span class="bad">missing</span>')]
+      ]) +
+      '<h3>VPN and VM</h3>' + kv([
+        ['VPN adapters', list((r.vpn || []).map(function (x) { return esc(x.name) + ' - <span class="' + (x.status === 'Up' ? 'ok' : 'muted') + '">' + esc(x.status) + '</span>'; }))],
+        ['VM', r.vm && r.vm.running ? 'Running, ' + num(r.vm.memMB, 0) + ' MB' : 'Not running']
+      ]) +
+      '</div><div>' +
+      '<h3>Memory at report time</h3>' + kv([
+        ['RAM free', num(m.freeGB) + ' of ' + num(m.totalGB) + ' GB'],
+        ['Commit', num(m.commitUsedGB) + ' of ' + num(m.commitTotalGB) + ' GB'],
+        ['Page file', esc(m.pagefileMB) + ' MB']
+      ]) +
+      '<h3>Top memory apps</h3>' + list((r.topApps || []).map(function (x) { return esc(x.name) + (x.count > 1 ? ' x' + esc(x.count) : '') + ' - ' + esc(x.mb) + ' MB'; })) +
+      '<h3>Outlook</h3>' + kv([['Version', esc(ol.version)], ['Mail files', list((ol.mailFiles || []).map(function (x) { return esc(x.name) + ' - ' + esc(x.mb) + ' MB'; }))]]) +
+      '<h3>Blue screens and sudden restarts (30 days)</h3>' + list((cr.lastBlueScreens || []).map(function (x) { return bdTime(x.time) + ' - Event ' + esc(x.id) + ' ' + esc(x.msg); })) +
+      '<h3>App crashes (7 days)</h3>' + list((cr.appCrashes7d || []).map(function (x) { return esc(x.app) + ' - ' + esc(x.count) + 'x'; })) +
+      '<h3>Startup</h3>' + kv([
+        ['Opens at sign-in', list((r.startupNow || []).map(esc))],
+        ['Opens slowly after 3 min', list((r.slowStart || []).map(esc))]
+      ]) +
+      '</div></div>' +
+      diffBlock('Software changes since the toolkit was installed', f && f !== r ? swDiff(f, r) : null) +
+      diffBlock('Software changes since the previous day', swDiff(pv, r)) +
+      '<h3>Installed software (' + esc((r.software || []).length) + ')</h3>' + list((r.software || []).map(function (x) { return esc(x.name) + ' <span class="muted">' + esc(x.version) + '</span>'; })) +
+      '<h3>Chrome extensions</h3>' + ((r.chromeExtensions || []).length ? (r.chromeExtensions || []).map(function (x) { return '<span class="chip">' + esc(x) + '</span>'; }).join('') : '<span class="muted">None</span>');
+    var box = $('detail'); box.innerHTML = html; box.hidden = false; box.scrollIntoView({ behavior: 'smooth' });
+    $('closeDetail').onclick = function () { box.hidden = true; };
+    var del = $('deletePc');
+    del.onclick = function () {
+      if (del.getAttribute('data-sure') !== '1') { del.setAttribute('data-sure', '1'); del.textContent = 'Click again to remove ' + p.pc; return; }
+      api('DELETE', '/api/data?pc=' + encodeURIComponent(p.pc)).then(function () { box.hidden = true; load(); }).catch(function (e) { del.textContent = 'Failed: ' + e.message; });
+    };
+  }
+
+  $('loginForm').onsubmit = function (e) { e.preventDefault(); setPw($('pw').value); $('pw').value = ''; $('loginMsg').textContent = ''; load(); };
+  $('refresh').onclick = load;
+  $('logout').onclick = function () { setPw(''); location.reload(); };
+  if (pw()) load();
+})();
+</script>
+</body>
+</html>

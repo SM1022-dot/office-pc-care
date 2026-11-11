@@ -1,0 +1,27 @@
+[
+    {
+        "build":  1,
+        "published":  "2026-11-10T17:41:35Z",
+        "notes":  "First release: problem-first menus, PC setup, Auto Care, signed self-update"
+    },
+    {
+        "build":  2,
+        "published":  "2026-11-10T17:56:57Z",
+        "notes":  "Startup apps open without a console window"
+    },
+    {
+        "build":  3,
+        "published":  "2026-11-11T12:27:53Z",
+        "notes":  "Fix: removed VMware memory tuning that starved Outlook and Viber; Viber normal priority"
+    },
+    {
+        "build":  4,
+        "published":  "2026-11-11T12:36:14Z",
+        "notes":  "Viber opens maximized at once; Windows Fast Startup back on"
+    },
+    {
+        "build":  5,
+        "published":  "2026-11-11T12:55:51Z",
+        "notes":  "IT dashboard: PCs send a daily report"
+    }
+]

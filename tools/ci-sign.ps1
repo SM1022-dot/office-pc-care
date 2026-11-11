@@ -49,6 +49,7 @@ $check.FromXmlString($publicXml)
 if (-not $check.VerifyData($manifestBytes, [Convert]::FromBase64String($signature), [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)) {
     throw 'Signature does not match the public key built into the toolkit. Nothing will be published.'
 }
+& (Join-Path $PSScriptRoot 'add-release-note.ps1') -Build $build -Notes $notes
 Write-Host ('Built and signed build ' + $build)
 Set-Output 'published' 'true'
 Set-Output 'build' ([string]$build)
