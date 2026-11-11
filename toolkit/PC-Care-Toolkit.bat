@@ -2364,7 +2364,32 @@ function Ensure-ViberStartup {
         $def.Principal.RunLevel = 0
         [void]$def.Triggers.Create(9)
         $action = $def.Actions.Create(0)
-        $action.Path = $taskExe
+        # Launcher: start Viber at once in a maximized window, then a hidden helper makes sure the
+        # main Viber window really ends up maximized and in front (Viber may ignore the start style).
+        $maxScript = Join-Path $script:ToolRoot 'viber-maximize.ps1'
+        $launcher = Join-Path $script:ToolRoot 'viber-start.vbs'
+        $max = @'
+Add-Type -Namespace PcCare -Name Win -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(System.IntPtr h, int c); [DllImport("user32.dll")] public static extern bool IsZoomed(System.IntPtr h); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);'
+$deadline = (Get-Date).AddSeconds(120)
+$done = 0
+while ((Get-Date) -lt $deadline -and $done -lt 3) {
+    $p = Get-Process -Name 'Viber' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.MainWindowTitle } | Select-Object -First 1
+    if ($p) {
+        if (-not [PcCare.Win]::IsZoomed($p.MainWindowHandle)) { [void][PcCare.Win]::ShowWindowAsync($p.MainWindowHandle, 3); [void][PcCare.Win]::SetForegroundWindow($p.MainWindowHandle) }
+        else { $done++ }
+    }
+    Start-Sleep -Milliseconds 700
+}
+'@
+        Set-Content -LiteralPath $maxScript -Value $max -Encoding UTF8
+        $vbs = @(
+            'Set sh = CreateObject("WScript.Shell")',
+            ('sh.Run """" & sh.ExpandEnvironmentStrings("' + $taskExe + '") & """", 3, False'),
+            ('sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""' + $maxScript + '""", 0, False')
+        )
+        Set-Content -LiteralPath $launcher -Value $vbs -Encoding ASCII
+        $action.Path = Join-Path $env:WINDIR 'System32\wscript.exe'
+        $action.Arguments = '//B //NoLogo "' + $launcher + '"'
         [void]$svc.GetFolder('\').RegisterTaskDefinition($script:ViberTask, $def, 6, $null, $null, 4)
     } catch { Write-Skip ('Viber sign-in task could not be created: ' + $_.Exception.Message); return }
     # Remove Viber's own "start minimized" entries so only the full-window start remains.
@@ -2423,8 +2448,9 @@ function Set-BackgroundQuiet([string]$Hive) {
     [void](Set-TrackedReg ($pol + '\CloudContent') 'DisableWindowsConsumerFeatures' 1)
     [void](Set-TrackedReg ($pol + '\DataCollection') 'AllowTelemetry' 0)
     foreach ($svc in @('DiagTrack', 'dmwappushservice')) { [void](Set-TrackedServiceStart -Name $svc -Start 4) }
-    # Fast Startup off: "Shut down" then gives a real fresh start every morning.
-    [void](Set-TrackedReg 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 0)
+    # Build 4: Fast Startup is left as Windows had it (PCs are shut down nightly, so it makes power-on faster).
+    # Undo the build 1-3 change that turned it off.
+    [void](Restore-Tracked { param($id) $id -match 'HiberbootEnabled' })
 }
 function Set-PowerHighPerformance {
     $high = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
@@ -2994,7 +3020,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '3'
+$script:BuildStamp     = '4'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3454,6 +3480,7 @@ function Invoke-ApplyAll {
     Update-SlowStart
     [void](Ensure-VmwareServices)
     Remove-VmwareTuning
+    [void](Restore-Tracked { param($id) $id -match 'HiberbootEnabled' })
 }
 function Invoke-OneTimeSetup {
     Write-Header 'PC SETUP'
