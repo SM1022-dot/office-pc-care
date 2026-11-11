@@ -1,11 +1,11 @@
 {
-    "build":  2,
-    "published":  "2026-11-10T17:56:57Z",
-    "notes":  "hidden slow start window",
+    "build":  3,
+    "published":  "2026-11-11T12:27:52Z",
+    "notes":  "fix: remove VMware memory tuning, normal Viber priority",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "45489bf9dbe47ae719a88c831beaaed55858db5d1e16664cd59ad05bc333e3a1"
+                      "sha256":  "9f2992b4c38b044e8cff50fc1190bcf941e220fad12526492f093203137f4d85"
                   },
                   {
                       "name":  "config.json",

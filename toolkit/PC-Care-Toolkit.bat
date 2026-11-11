@@ -2359,7 +2359,7 @@ function Ensure-ViberStartup {
         $def.Settings.StopIfGoingOnBatteries = $false
         $def.Settings.ExecutionTimeLimit = 'PT0S'
         $def.Settings.MultipleInstances = 2
-        $def.Settings.Priority = 2
+        $def.Settings.Priority = 5
         $def.Principal.GroupId = 'S-1-5-32-545'
         $def.Principal.RunLevel = 0
         [void]$def.Triggers.Create(9)
@@ -2571,7 +2571,7 @@ function Invoke-FullOptimization {
     Write-Step '[4/8] Memory file'
     Set-FixedPagefile
     Write-Step '[5/8] VMware'
-    Set-VMwareHostMemory
+    Remove-VmwareTuning
     Add-VmDefenderExclusions
     Write-Step '[6/8] Startup apps'
     Disable-JunkStartup
@@ -2994,7 +2994,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '2'
+$script:BuildStamp     = '3'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3398,10 +3398,31 @@ function Register-EarlyBootTask {
         [void]$svc.GetFolder('\').RegisterTaskDefinition($script:EarlyTask, $def, 6, 'SYSTEM', $null, 5)
     } catch { Write-Skip ('Early boot task could not be created: ' + $_.Exception.Message) }
 }
+function Remove-VmwareTuning {
+    # Build 3: VMware memory tuning (MemTrimRate 0, minVmMemPct 100, useNamedFile FALSE) kept VM memory
+    # locked in RAM and starved Outlook/Viber on 8 GB PCs. Remove exactly those lines, nothing else.
+    $ours = '^\s*(MemTrimRate\s*=\s*"0"|sched\.mem\.pshare\.enable\s*=\s*"FALSE"|mainMem\.useNamedFile\s*=\s*"FALSE"|prefvmx\.minVmMemPct\s*=\s*"100")\s*$'
+    $targets = @()
+    foreach ($product in @('VMware Workstation', 'VMware Player')) { $targets += (Join-Path $env:ProgramData ('VMware\' + $product + '\config.ini')) }
+    $vmRunning = @(Get-Process -Name 'vmware-vmx' -ErrorAction SilentlyContinue).Count -gt 0
+    if (-not $vmRunning) { $targets += @(Get-VmxFiles) }
+    $n = 0
+    foreach ($file in $targets) {
+        if (-not (Test-Path -LiteralPath $file)) { continue }
+        if ($file -like '*.vmx' -and (Test-Path -LiteralPath ($file + '.lck'))) { continue }
+        try {
+            $lines = @(Get-Content -LiteralPath $file)
+            $kept = @($lines | Where-Object { $_ -notmatch $ours })
+            if ($kept.Count -ne $lines.Count) { [IO.File]::WriteAllLines($file, [string[]]$kept); $n++ }
+        } catch {}
+    }
+    Set-UndoFlag 'VMwareConfig' $null
+    if ($n -gt 0) { Write-Done ('VMware memory settings returned to normal in ' + $n + ' file(s).') }
+}
 function Invoke-EarlyBoot {
     Write-Header ('EARLY BOOT ' + (Get-Date -Format 'yyyy-MM-dd HH:mm'))
     [void](Ensure-VmwareServices)
-    Set-VmxMemorySettings
+    Remove-VmwareTuning
 }
 
 # ---------------------------------------------------------------------
@@ -3432,6 +3453,7 @@ function Invoke-ApplyAll {
     Ensure-ViberStartup
     Update-SlowStart
     [void](Ensure-VmwareServices)
+    Remove-VmwareTuning
 }
 function Invoke-OneTimeSetup {
     Write-Header 'PC SETUP'
@@ -3455,7 +3477,7 @@ function Invoke-OneTimeSetup {
     try { [void](Invoke-AsSystem 'wu-off'); if ((Get-Service wuauserv -ErrorAction SilentlyContinue).StartType -eq 'Disabled') { Write-Done 'Windows Update is OFF.' } else { Write-Skip 'Windows Update could not be fully turned off. Auto Care will try again.' } }
     catch { Write-Skip ('Windows Update step failed: ' + $_.Exception.Message) }
     Write-Step '[6/7] VM settings'
-    Set-VmxMemorySettings
+    Remove-VmwareTuning
     Write-Step '[7/7] Automatic care and updates'
     if (Register-AutoCareTask) { Write-Done 'Auto Care runs 10 minutes after the PC starts, and every day at 3:30 PM and 8:30 PM Bangladesh time. It also installs updates sent by IT.' }
     Register-EarlyBootTask
