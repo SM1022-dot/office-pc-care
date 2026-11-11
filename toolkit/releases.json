@@ -43,5 +43,10 @@
         "build":  9,
         "published":  "2026-11-11T15:46:43Z",
         "notes":  "Silent update check every 15 minutes: new builds reach every PC within 15 minutes"
+    },
+    {
+        "build":  10,
+        "published":  "2026-11-11T15:50:09Z",
+        "notes":  ""
     }
 ]

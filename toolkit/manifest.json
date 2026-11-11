@@ -1,11 +1,11 @@
 {
-    "build":  9,
-    "published":  "2026-11-11T15:46:43Z",
-    "notes":  "Silent update check every 15 minutes: new builds reach every PC within 15 minutes",
+    "build":  10,
+    "published":  "2026-11-11T15:50:08Z",
+    "notes":  "",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "6212c3609c4a891b2a25af1a31994e8d36b50184fd3b57b17978f7ffc63e2a22"
+                      "sha256":  "375727034cc1ab3f73853ec162a83a11f6a343213cbe8fbafb27c7418b17ddf6"
                   },
                   {
                       "name":  "config.json",
