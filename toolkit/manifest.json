@@ -1,11 +1,11 @@
 {
-    "build":  10,
-    "published":  "2026-11-11T15:50:08Z",
-    "notes":  "",
+    "build":  11,
+    "published":  "2026-11-11T15:53:31Z",
+    "notes":  "Report on install and on every toolkit open, silent update on open, self-repair missing tasks, never downgrade; dashboar",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "375727034cc1ab3f73853ec162a83a11f6a343213cbe8fbafb27c7418b17ddf6"
+                      "sha256":  "869d34dd21dfac1147ed659ac8742fec258b0bf106b0b603817b2e9db1a53287"
                   },
                   {
                       "name":  "config.json",

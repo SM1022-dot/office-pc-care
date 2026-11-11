@@ -48,5 +48,10 @@
         "build":  10,
         "published":  "2026-11-11T15:50:09Z",
         "notes":  ""
+    },
+    {
+        "build":  11,
+        "published":  "2026-11-11T15:53:31Z",
+        "notes":  "Report on install and on every toolkit open, silent update on open, self-repair missing tasks, never downgrade; dashboar"
     }
 ]

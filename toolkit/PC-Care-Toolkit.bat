@@ -2157,7 +2157,12 @@ function Install-ToolkitCopy {
     & icacls.exe $script:ToolRoot /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' 2>&1 | Out-Null
     $source = [string]$env:PCTOOLKIT_FILE
     if ($source -and (Test-Path -LiteralPath $source) -and ($source -ne $script:InstalledBat)) {
-        Copy-Item -LiteralPath $source -Destination $script:InstalledBat -Force
+        # Never replace a newer installed copy with an older file (for example an old copy in Downloads).
+        $installedNow = Get-InstalledBuild
+        if (-not (Test-Path -LiteralPath $script:InstalledBat) -or ($script:ToolkitBuild -gt $installedNow)) {
+            Copy-Item -LiteralPath $source -Destination $script:InstalledBat -Force
+            if ($script:ToolkitBuild -gt $installedNow) { Set-InstalledBuild $script:ToolkitBuild }
+        }
     }
     return (Test-Path -LiteralPath $script:InstalledBat)
 }
@@ -3039,6 +3044,28 @@ function Get-PcReportData {
         updateTask = (& $hasTask 'Office PC Care Toolkit - Update Check')
     }
     $r.chromeExtensions = @(Get-InstalledChromeExtensions)
+    # Same details as the desktop "Send report to IT" file.
+    try {
+        $bios = Get-CimInstance Win32_BIOS
+        $r.bios = [ordered]@{ version = [string]$bios.SMBIOSBIOSVersion; date = $(if ($bios.ReleaseDate) { $bios.ReleaseDate.ToString('yyyy-MM-dd') } else { '' }); serial = [string]$bios.SerialNumber }
+    } catch {}
+    try {
+        $lic = @(Get-CimInstance SoftwareLicensingProduct -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop)[0]
+        $r.windows.activation = switch ([int]$lic.LicenseStatus) { 1 { 'Activated' } 0 { 'Not activated' } default { 'Status ' + $lic.LicenseStatus } }
+    } catch {}
+    try {
+        $r.network = @(Get-NetAdapter -ErrorAction Stop | Sort-Object Status | ForEach-Object {
+            $idx = $_.ifIndex
+            [ordered]@{
+                name = [string]$_.Name; description = [string]$_.InterfaceDescription; status = [string]$_.Status; speed = [string]$_.LinkSpeed; mac = [string]$_.MacAddress
+                ipv4 = @(Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.IPAddress })
+                dns = @((Get-DnsClientServerAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses)
+            }
+        })
+    } catch { $r.network = @() }
+    $r.startupFolder = @()
+    if ($profile.LocalPath) { $r.startupFolder = @(Get-ChildItem -LiteralPath (Join-Path $profile.LocalPath 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup') -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
+    $r.recentLogs = @(Get-ChildItem -LiteralPath $script:LogRoot -File -Filter 'PC-Care_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 5 | ForEach-Object { $_.Name })
     return $r
 }
 function Send-PcReport([switch]$Force) {
@@ -3114,7 +3141,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '10'
+$script:BuildStamp     = '11'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3634,6 +3661,7 @@ function Invoke-OneTimeSetup {
     Register-EarlyBootTask
     Register-UpdateCheckTask
     Set-Content -LiteralPath $script:SetupMarker -Value (Get-Date -Format 's') -Encoding ASCII
+    Send-PcReport -Force
     Write-Host ''
     Write-Host 'PC setup finished. Restart the PC once to finish.' -ForegroundColor Green
     Write-MajorWarning 'Restarting closes all apps and the VM. Save your work first.'
@@ -3798,6 +3826,7 @@ switch ($script:Mode) {
         exit 0
     }
     'allow-extension' { Add-LocalChromeExtension $script:ExtraArg; [void](Read-Host 'Press Enter to close'); exit 0 }
+    'report' { Send-PcReport -Force; try { Stop-Transcript | Out-Null } catch {}; exit 0 }
     'test'   { return }
 }
 
@@ -3805,6 +3834,21 @@ if (-not (Test-Path -LiteralPath $script:SetupMarker)) {
     Clear-Host
     Write-Host 'This PC has not been set up by the Office PC Care Toolkit yet.' -ForegroundColor Cyan
     Invoke-SafeAction { Invoke-OneTimeSetup; Wait-Back }
+}
+
+# Every time staff open the toolkit: quietly repair missing tasks, then check for an update and send a
+# fresh report to the IT dashboard in a hidden background process. Nothing is shown and nothing waits.
+if (Test-Path -LiteralPath $script:SetupMarker) {
+    try {
+        $taskRoot = (Get-TaskService).GetFolder('\')
+        $missing = @($script:TaskName, $script:UpdateTask, $script:EarlyTask) | Where-Object { $n = $_; try { [void]$taskRoot.GetTask($n); $false } catch { $true } }
+        if (@($missing).Count -gt 0) { [void](Register-AutoCareTask); Register-EarlyBootTask; Register-UpdateCheckTask }
+    } catch {}
+    if (Install-ToolkitCopy) {
+        $cmdExe = Join-Path $env:WINDIR 'System32\cmd.exe'
+        try { Start-Process -FilePath $cmdExe -ArgumentList ('/d /c ""' + $script:InstalledBat + '" update"') -WindowStyle Hidden } catch {}
+        try { Start-Process -FilePath $cmdExe -ArgumentList ('/d /c ""' + $script:InstalledBat + '" report"') -WindowStyle Hidden } catch {}
+    }
 }
 
 $exitToolkit = $false
