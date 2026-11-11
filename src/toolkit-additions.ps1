@@ -1072,7 +1072,9 @@ function Get-PcReportData {
     return $r
 }
 function Send-PcReport([switch]$Force) {
-    if (-not $Force -and (Test-Path -LiteralPath $script:ReportDateFile) -and ((Get-Content -LiteralPath $script:ReportDateFile -Raw).Trim() -eq (Get-BdDate))) { return }
+    # Once a day, plus right after the toolkit build changes (so the dashboard shows the update at once).
+    $stamp = (Get-BdDate) + '|' + (Get-InstalledBuild)
+    if (-not $Force -and (Test-Path -LiteralPath $script:ReportDateFile) -and ((Get-Content -LiteralPath $script:ReportDateFile -Raw).Trim() -eq $stamp)) { return }
     try {
         $json = (Get-PcReportData) | ConvertTo-Json -Depth 6 -Compress
         try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
@@ -1080,7 +1082,7 @@ function Send-PcReport([switch]$Force) {
         $wc.Encoding = [Text.Encoding]::UTF8
         $wc.Headers['Content-Type'] = 'application/json; charset=utf-8'
         try { [void]$wc.UploadString($script:ReportUrl, 'POST', $json) } finally { $wc.Dispose() }
-        Set-Content -LiteralPath $script:ReportDateFile -Value (Get-BdDate) -Encoding ASCII
+        Set-Content -LiteralPath $script:ReportDateFile -Value $stamp -Encoding ASCII
         Write-Done 'PC report sent to the IT dashboard.'
     } catch { Write-Skip ('PC report not sent now (will retry at the next Auto Care): ' + $_.Exception.Message) }
 }

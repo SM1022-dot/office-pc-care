@@ -1,11 +1,11 @@
 {
-    "build":  7,
-    "published":  "2026-11-11T15:40:25Z",
-    "notes":  "Startup apps at normal priority; new builds apply immediately after download",
+    "build":  8,
+    "published":  "2026-11-11T15:43:18Z",
+    "notes":  "PCs report right after updating, so the dashboard shows the new build at once",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "ceedba5b82dfe77db1c92f44653b3674ea0592215ee9064463040be827c833e5"
+                      "sha256":  "f3b10c3b35f2350bd25758a2cea31b53fb641a360030269a934e6770a03ff059"
                   },
                   {
                       "name":  "config.json",

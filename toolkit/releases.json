@@ -33,5 +33,10 @@
         "build":  7,
         "published":  "2026-11-11T15:40:25Z",
         "notes":  "Startup apps at normal priority; new builds apply immediately after download"
+    },
+    {
+        "build":  8,
+        "published":  "2026-11-11T15:43:18Z",
+        "notes":  "PCs report right after updating, so the dashboard shows the new build at once"
     }
 ]
