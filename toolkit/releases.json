@@ -28,5 +28,10 @@
         "build":  6,
         "published":  "2026-11-11T15:36:01Z",
         "notes":  "Dashboard: person/desk/team labels, search; report adds full name, IP, time zone"
+    },
+    {
+        "build":  7,
+        "published":  "2026-11-11T15:40:25Z",
+        "notes":  "Startup apps at normal priority; new builds apply immediately after download"
     }
 ]

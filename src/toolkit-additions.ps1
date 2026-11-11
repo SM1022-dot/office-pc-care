@@ -1233,6 +1233,7 @@ function Invoke-SelfUpdate {
     Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
     Set-InstalledBuild ([int]$manifest.build)
     Write-Done ('Toolkit updated from build ' + $current + ' to build ' + $manifest.build + '.')
+    return $true
 }
 
 # ---------------------------------------------------------------------
@@ -1452,6 +1453,9 @@ function Register-SlowStartTask {
         $def.Settings.DisallowStartIfOnBatteries = $false
         $def.Settings.StopIfGoingOnBatteries = $false
         $def.Settings.ExecutionTimeLimit = 'PT30M'
+        # Normal priority: apps started by this task (VPN, Avro keyboard...) inherit it. The Task Scheduler
+        # default (7 = below normal) made them lag whenever the CPU was busy.
+        $def.Settings.Priority = 5
         $def.Settings.MultipleInstances = 2
         $def.Principal.GroupId = 'S-1-5-32-545'
         $def.Principal.RunLevel = 0
@@ -1637,7 +1641,14 @@ function Invoke-OneTimeSetup {
 }
 function Invoke-AutoCare {
     Write-Header ('AUTO CARE ' + (Get-Date -Format 'yyyy-MM-dd HH:mm') + ' (build ' + (Get-InstalledBuild) + ')')
-    Invoke-SelfUpdate
+    $updated = Invoke-SelfUpdate
+    if ($updated -eq $true -and -not $env:PCTOOLKIT_CHAINED -and (Test-Path -LiteralPath $script:InstalledBat)) {
+        # Run the rest of Auto Care with the NEW build right away, so fixes apply now, not hours later.
+        $env:PCTOOLKIT_CHAINED = '1'
+        Write-Note 'Running Auto Care again with the new build.'
+        Start-Process -FilePath (Join-Path $env:WINDIR 'System32\cmd.exe') -ArgumentList ('/d /c ""' + $script:InstalledBat + '" auto"') -WindowStyle Hidden -Wait
+        return
+    }
     if (-not (Test-Path -LiteralPath $script:SetupMarker)) { Write-Skip 'PC setup has not been run. Auto Care only cleans temporary files.'; Invoke-DailyCare; return }
     Invoke-DailyCare
     Invoke-ApplyAll
