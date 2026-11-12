@@ -942,6 +942,22 @@ function New-ITReport([string]$OutDir = '') {
         $L.Add(('Toolkit     : setup {0} | Auto Care task {1}' -f $(if (Test-Path -LiteralPath $script:SetupMarker) { 'done' } else { 'not done' }), $(try { [void](Get-TaskService).GetFolder('\').GetTask($script:TaskName); 'present' } catch { 'missing' })))
     } catch { $L.Add('Hardware/Windows details could not be read: ' + $_.Exception.Message) }
     $L.Add('')
+    $L.Add('== DISK HEALTH DETAILS ==')
+    try {
+        foreach ($pd in @(Get-PhysicalDisk -ErrorAction Stop)) {
+            $line = ('{0} | {1} | Health: {2} | Status: {3}' -f $pd.FriendlyName, $pd.MediaType, $pd.HealthStatus, (@($pd.OperationalStatus) -join ', '))
+            try { $rc = $pd | Get-StorageReliabilityCounter -ErrorAction Stop; $line += (' | Temp {0} C | Power-on {1} h | Read errors not fixed {2} | Write errors not fixed {3}' -f $rc.Temperature, $rc.PowerOnHours, $rc.ReadErrorsUncorrected, $rc.WriteErrorsUncorrected) } catch {}
+            $L.Add($line)
+        }
+    } catch { $L.Add('Not available.') }
+    foreach ($vx in @(Get-VmxFiles)) { $L.Add(('VM file      : {0}' -f $vx)) }
+    $L.Add('')
+    $L.Add('== CPU AND DISK NOW (5-second sample) ==')
+    $ls = Get-LoadSample
+    $L.Add(('CPU in use  : {0}%' -f $ls.cpuPercent))
+    foreach ($x in @($ls.topCpu)) { $L.Add(('{0,-30} {1,5}% CPU' -f $x.name, $x.percent)) }
+    foreach ($x in @($ls.disks)) { $L.Add(('Disk {0,-24} {1,5}% busy, queue {2}' -f $x.disk, $x.busyPercent, $x.queue)) }
+    $L.Add('')
     $L.Add('== TOP 15 APPS BY MEMORY ==')
     Get-Process -ErrorAction SilentlyContinue | Sort-Object WorkingSet64 -Descending | Select-Object -First 15 | ForEach-Object { $L.Add(('{0,-30} {1,7:N0} MB' -f $_.ProcessName, ($_.WorkingSet64 / 1MB))) }
     $L.Add('')
@@ -1023,7 +1039,18 @@ function Get-PcReportData {
         $cpu = @(Get-CimInstance Win32_Processor)[0]; $bb = Get-CimInstance Win32_BaseBoard
         $slots = 0; try { $slots = [int](@(Get-CimInstance Win32_PhysicalMemoryArray) | Measure-Object -Property MemoryDevices -Sum).Sum } catch {}
         $disks = @()
-        try { $disks = @(Get-PhysicalDisk -ErrorAction Stop | ForEach-Object { [ordered]@{ name = [string]$_.FriendlyName; type = [string]$_.MediaType; gb = [int]($_.Size / 1GB); health = [string]$_.HealthStatus } }) }
+        try {
+            $disks = @(Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
+                $pd = $_
+                $d = [ordered]@{ name = [string]$pd.FriendlyName; type = [string]$pd.MediaType; gb = [int]($pd.Size / 1GB); health = [string]$pd.HealthStatus; status = (@($pd.OperationalStatus) -join ', ') }
+                try {
+                    $rc = $pd | Get-StorageReliabilityCounter -ErrorAction Stop
+                    $d.temperatureC = $rc.Temperature; $d.powerOnHours = $rc.PowerOnHours; $d.wearPercent = $rc.Wear
+                    $d.readErrorsUncorrected = $rc.ReadErrorsUncorrected; $d.readErrorsTotal = $rc.ReadErrorsTotal; $d.writeErrorsUncorrected = $rc.WriteErrorsUncorrected
+                } catch {}
+                $d
+            })
+        }
         catch { $disks = @(Get-CimInstance Win32_DiskDrive | ForEach-Object { [ordered]@{ name = [string]$_.Model; type = ''; gb = [int]($_.Size / 1GB); health = [string]$_.Status } }) }
         $r.hardware = [ordered]@{
             cpu = ([string]$cpu.Name).Trim(); cores = [int]$cpu.NumberOfCores; threads = [int]$cpu.NumberOfLogicalProcessors
@@ -1081,6 +1108,14 @@ function Get-PcReportData {
     $r.chromeExtensions = @(Get-InstalledChromeExtensions)
     $r.viber = Get-ViberStats $profile
     $r.load = Get-LoadSample
+    $r.vmFiles = @(Get-VmxFiles | ForEach-Object {
+        $vmDir = Split-Path -Parent $_
+        $sizeGB = [math]::Round(((Get-ChildItem -LiteralPath $vmDir -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1GB, 1)
+        $drive = (Split-Path -Qualifier $_)
+        $media = ''
+        try { $media = [string](Get-Partition -DriveLetter $drive.TrimEnd(':') -ErrorAction Stop | Get-Disk | Get-PhysicalDisk -ErrorAction Stop).MediaType } catch {}
+        [ordered]@{ vm = (Split-Path -Leaf $_); drive = $drive; diskType = $media; sizeGB = $sizeGB }
+    })
     # Same details as the desktop "Send report to IT" file.
     try {
         $bios = Get-CimInstance Win32_BIOS

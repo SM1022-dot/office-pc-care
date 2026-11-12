@@ -97,6 +97,7 @@
     if (real == null) { real = (cr.lastBlueScreens || []).filter(function (x) { return Number(x.id) === 1001; }).length; power = Math.max(0, (cr.blueScreens30d || 0) - real); }
     return { real: real || 0, power: power || 0 };
   }
+  function diskBad(r) { return ((r.hardware || {}).disks || []).some(function (d) { return d.health && d.health !== 'Healthy' && d.health !== 'OK'; }); }
   function cls(ok, warn) { return ok ? 'ok' : (warn ? 'warn' : 'bad'); }
 
   function api(method, path, body) {
@@ -134,6 +135,7 @@
     var seenToday = pcs.filter(function (p) { return p.latest.reportDate === today; }).length;
     var onLatest = pcs.filter(function (p) { return Number(p.latest.build) >= state.latestBuild; }).length;
     var bsod = pcs.filter(function (p) { return bsCounts(p.latest.crashes).real > 0; }).length;
+    var badDisk = pcs.filter(function (p) { return diskBad(p.latest); }).length;
     var lowDisk = pcs.filter(function (p) { var c = cDrive(p.latest); return c && c.freeGB < 15; }).length;
     $('updated').textContent = 'Updated ' + bdTime(state.data.generated) + '  -  latest toolkit build ' + state.latestBuild;
     $('stats').innerHTML = [
@@ -141,7 +143,8 @@
       ['Reported today', seenToday, seenToday === pcs.length ? 'ok' : 'warn'],
       ['On latest build', onLatest + ' / ' + pcs.length, onLatest === pcs.length ? 'ok' : 'warn'],
       ['Real blue screens (30 days)', bsod + ' PC', bsod ? 'bad' : 'ok'],
-      ['C: under 15 GB free', lowDisk + ' PC', lowDisk ? 'warn' : 'ok']
+      ['C: under 15 GB free', lowDisk + ' PC', lowDisk ? 'warn' : 'ok'],
+      ['Disk health warning', badDisk + ' PC', badDisk ? 'bad' : 'ok']
     ].map(function (s) { return '<div class="stat"><span class="muted">' + esc(s[0]) + '</span><b class="' + s[2] + '">' + esc(s[1]) + '</b></div>'; }).join('');
 
     $('empty').hidden = pcs.length > 0;
@@ -161,7 +164,7 @@
       return '<tr class="row" data-pc="' + esc(p.pc) + '">' +
         '<td>' + (l.label ? '<b>' + esc(l.label) + '</b>' : '<span class="warn">Set name</span>') + '</td>' +
         '<td>' + esc(l.team || '') + '<div class="muted">' + esc(tz) + '</div></td>' +
-        '<td>' + esc(p.pc) + '<div class="muted">' + esc((r.ipv4 || []).join(', ')) + '</div></td>' +
+        '<td>' + esc(p.pc) + (diskBad(r) ? ' <span class="bad">disk warning</span>' : '') + '<div class="muted">' + esc((r.ipv4 || []).join(', ')) + '</div></td>' +
         '<td>' + esc((r.user || '').split('\\').pop()) + '<div class="muted">' + esc(r.userFullName || '') + '</div></td>' +
         '<td class="' + buildCls + '">' + esc(r.build) + '</td><td>' + esc(ago(r.time)) + '<div class="muted">' + bdTime(r.time) + '</div></td>' +
         '<td>' + num((r.windows || {}).uptimeHours, 0) + ' h</td>' +
@@ -241,7 +244,14 @@
         ['Motherboard', esc(hw.board)], ['PC model', esc(hw.model)],
         ['RAM', num(hw.ramGB) + ' GB in ' + esc((hw.ramSticks || []).length) + ' of ' + esc(hw.ramSlots) + ' slots'],
         ['RAM sticks', list((hw.ramSticks || []).map(function (x) { return esc(x.slot) + ': ' + esc(x.gb) + ' GB ' + esc(x.mhz) + ' MHz ' + esc(x.part); }))],
-        ['Disks', list((hw.disks || []).map(function (x) { return esc(x.name) + ' | ' + esc(x.type) + ' | ' + esc(x.gb) + ' GB | <span class="' + (x.health === 'Healthy' || x.health === 'OK' ? 'ok' : 'bad') + '">' + esc(x.health) + '</span>'; }))],
+        ['Disks', list((hw.disks || []).map(function (x) {
+          var extra = [];
+          if (x.temperatureC != null) extra.push(esc(x.temperatureC) + ' C');
+          if (x.powerOnHours != null) extra.push(esc(x.powerOnHours) + ' h on');
+          if (x.readErrorsUncorrected != null) extra.push('<span class="' + (x.readErrorsUncorrected ? 'bad' : 'muted') + '">' + esc(x.readErrorsUncorrected) + ' read errors not fixed</span>');
+          return esc(x.name) + ' | ' + esc(x.type) + ' | ' + esc(x.gb) + ' GB | <span class="' + (x.health === 'Healthy' || x.health === 'OK' ? 'ok' : 'bad') + '">' + esc(x.health) + (x.status ? ' (' + esc(x.status) + ')' : '') + '</span>' + (extra.length ? '<div class="muted">' + extra.join(' | ') + '</div>' : '');
+        }))],
+        ['VM files', list((r.vmFiles || []).map(function (v) { return esc(v.vm) + ' on ' + esc(v.drive) + ' <span class="' + (/HDD/i.test(v.diskType || '') ? 'warn' : 'muted') + '">' + esc(v.diskType || '') + '</span> - ' + esc(v.sizeGB) + ' GB'; }))],
         ['Drives', list((hw.drives || []).map(function (x) { return esc(x.id) + ' ' + num(x.freeGB, 0) + ' GB free of ' + num(x.sizeGB, 0); }))],
         ['Graphics', esc(hw.gpu)]
       ]) +
