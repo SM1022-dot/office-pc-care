@@ -1,11 +1,11 @@
 {
-    "build":  16,
-    "published":  "2026-11-12T13:52:54Z",
-    "notes":  "Speed up Viber: explain encrypted database, keep it unchanged, still clean old previews",
+    "build":  17,
+    "published":  "2026-11-12T14:01:07Z",
+    "notes":  "Viber freezes: Defender skips Viber data folder, Viber above-normal priority, Firefox fewer processes and tab unloading",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "532e14f529529c27476084cea23d53aaa169b20f7653e425274fb911f7e9d159"
+                      "sha256":  "bbcc993b5939323fa5da452817da5185ab08edda2eae2c540c187f7665d525af"
                   },
                   {
                       "name":  "config.json",

@@ -78,5 +78,10 @@
         "build":  16,
         "published":  "2026-11-12T13:52:55Z",
         "notes":  "Speed up Viber: explain encrypted database, keep it unchanged, still clean old previews"
+    },
+    {
+        "build":  17,
+        "published":  "2026-11-12T14:01:07Z",
+        "notes":  "Viber freezes: Defender skips Viber data folder, Viber above-normal priority, Firefox fewer processes and tab unloading"
     }
 ]
