@@ -1,11 +1,11 @@
 {
-    "build":  13,
-    "published":  "2026-11-12T12:59:53Z",
-    "notes":  "Report measures Viber data, database, downloads, RAM and version; dashboard Viber column; background report at most ever",
+    "build":  14,
+    "published":  "2026-11-12T13:28:04Z",
+    "notes":  "Separate real blue screens from power-offs in report and dashboard",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "0ba72fe32ef864842db7c75bc628be0e79b806dbec2cd36bcc08f11f7dd24abc"
+                      "sha256":  "02fa6569366865b309fa4bb6ec16a026424858d3725ed1207a18cedbf3ee8e40"
                   },
                   {
                       "name":  "config.json",

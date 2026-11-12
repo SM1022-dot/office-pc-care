@@ -63,5 +63,10 @@
         "build":  13,
         "published":  "2026-11-12T12:59:53Z",
         "notes":  "Report measures Viber data, database, downloads, RAM and version; dashboard Viber column; background report at most ever"
+    },
+    {
+        "build":  14,
+        "published":  "2026-11-12T13:28:04Z",
+        "notes":  "Separate real blue screens from power-offs in report and dashboard"
     }
 ]
