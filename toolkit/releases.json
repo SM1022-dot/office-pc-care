@@ -83,5 +83,10 @@
         "build":  17,
         "published":  "2026-11-12T14:01:07Z",
         "notes":  "Viber freezes: Defender skips Viber data folder, Viber above-normal priority, Firefox fewer processes and tab unloading"
+    },
+    {
+        "build":  18,
+        "published":  "2026-11-12T14:14:43Z",
+        "notes":  "Report samples CPU per app and disk busy; dashboard shows them; toolkit reopens Viber maximized at above-normal priority"
     }
 ]

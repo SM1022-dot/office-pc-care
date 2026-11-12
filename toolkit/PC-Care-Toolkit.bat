@@ -1303,7 +1303,10 @@ function Start-ViberAgain([string]$ViberExe) {
         return
     }
     try {
-        Start-UserProgram -Path $ViberExe
+        # v13: use the toolkit launcher when present, so Viber opens maximized and at above-normal priority.
+        $launcher = Join-Path $env:ProgramData 'Office-PC-Care-Toolkit\viber-start.vbs'
+        if (Test-Path -LiteralPath $launcher) { [void](Start-UserProgram -Path (Join-Path $env:WINDIR 'System32\wscript.exe') -Arguments ('//B //NoLogo "' + $launcher + '"')) }
+        else { Start-UserProgram -Path $ViberExe }
         Start-Sleep -Seconds 10
         if (@(Get-CurrentSessionProcesses -ProcessName 'Viber').Count -gt 0) {
             Bring-ViberWindowForward
@@ -3049,6 +3052,7 @@ function Get-PcReportData {
     }
     $r.chromeExtensions = @(Get-InstalledChromeExtensions)
     $r.viber = Get-ViberStats $profile
+    $r.load = Get-LoadSample
     # Same details as the desktop "Send report to IT" file.
     try {
         $bios = Get-CimInstance Win32_BIOS
@@ -3072,6 +3076,36 @@ function Get-PcReportData {
     if ($profile.LocalPath) { $r.startupFolder = @(Get-ChildItem -LiteralPath (Join-Path $profile.LocalPath 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup') -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
     $r.recentLogs = @(Get-ChildItem -LiteralPath $script:LogRoot -File -Filter 'PC-Care_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 5 | ForEach-Object { $_.Name })
     return $r
+}
+function Get-LoadSample {
+    # 5-second sample: which apps use the CPU, how busy the disks are. Our own process is left out.
+    $out = [ordered]@{ seconds = 5 }
+    try {
+        $cores = [Environment]::ProcessorCount
+        $a = @{}; foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) { try { $a[$p.Id] = @{ n = $p.ProcessName; t = $p.TotalProcessorTime.TotalMilliseconds } } catch {} }
+        $diskBefore = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_Total' })
+        Start-Sleep -Seconds 5
+        $use = @{}
+        foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+            if (-not $a.ContainsKey($p.Id) -or $p.Id -eq $PID) { continue }
+            try { $d = $p.TotalProcessorTime.TotalMilliseconds - $a[$p.Id].t } catch { continue }
+            if ($d -le 0) { continue }
+            $use[$p.ProcessName] = [double]$use[$p.ProcessName] + $d
+        }
+        $total = 0; foreach ($v in $use.Values) { $total += $v }
+        $out.cpuPercent = [math]::Round(100 * $total / (5000 * $cores), 1)
+        $out.topCpu = @($use.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 8 | ForEach-Object { [ordered]@{ name = $_.Key; percent = [math]::Round(100 * $_.Value / (5000 * $cores), 1) } })
+        $diskAfter = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_Total' })
+        $out.disks = @(foreach ($d1 in $diskAfter) {
+            $d0 = $diskBefore | Where-Object { $_.Name -eq $d1.Name } | Select-Object -First 1
+            if (-not $d0) { continue }
+            $dt = [double]($d1.Timestamp_Sys100NS - $d0.Timestamp_Sys100NS)
+            if ($dt -le 0) { continue }
+            $idle = 100 * ([double]($d1.PercentIdleTime - $d0.PercentIdleTime)) / $dt
+            [ordered]@{ disk = [string]$d1.Name; busyPercent = [math]::Round([math]::Max(0, [math]::Min(100, 100 - $idle)), 1); queue = [int]$d1.CurrentDiskQueueLength }
+        })
+    } catch {}
+    return $out
 }
 function Get-ViberStats($Profile) {
     # Sizes only: no chat text, file contents or phone numbers (digits in names are masked).
@@ -3202,7 +3236,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '17'
+$script:BuildStamp     = '18'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
