@@ -1145,6 +1145,14 @@ function Get-ViberStats($Profile) {
         $dl = @(Get-ChildItem -LiteralPath $docs -Recurse -File -Force -ErrorAction SilentlyContinue)
         $v.downloadsMB = [int](($dl | Measure-Object Length -Sum).Sum / 1MB); $v.downloadsFiles = $dl.Count
     }
+    $dbPath = Get-ViberDbPath $Profile
+    if ($dbPath -and (Initialize-PcCareSqlite)) {
+        try {
+            $pages = [double][PcCareSqlite]::Run($dbPath, 'PRAGMA page_count', $true)
+            $freeP = [double][PcCareSqlite]::Run($dbPath, 'PRAGMA freelist_count', $true)
+            if ($pages -gt 0) { $v.dbFreePercent = [math]::Round(100 * $freeP / $pages, 1) }
+        } catch { $v.dbFreePercent = $null }
+    }
     $bk = Join-Path $Profile.LocalPath 'AppData\Local\Office-PC-Care-Toolkit\ViberCacheBackup'
     if (Test-Path -LiteralPath $bk) { $v.toolkitCacheBackupMB = [int]((Get-ChildItem -LiteralPath $bk -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB) }
     return $v
@@ -1684,6 +1692,7 @@ function Invoke-DailyPcCleanup([switch]$Quiet) {
             $extra += @{ Path = (Join-Path $local 'Microsoft\Windows\INetCache'); Days = 3; Label = 'Old internet cache' }
             $extra += @{ Path = (Join-Path $local 'D3DSCache'); Days = 7; Label = 'Old graphics cache' }
             $extra += @{ Path = (Join-Path $local 'Microsoft\Windows\WER'); Days = 14; Label = 'Old app error reports' }
+            $extra += @{ Path = (Join-Path $local 'Office-PC-Care-Toolkit\ViberCacheBackup'); Days = 7; Label = 'Old Viber cache backups' }
             if (@(Get-Process -Name 'chrome' -ErrorAction SilentlyContinue).Count -eq 0) {
                 $chromeData = Join-Path $local 'Google\Chrome\User Data'
                 foreach ($p in @(Get-ChildItem -LiteralPath $chromeData -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' })) {
@@ -1702,6 +1711,130 @@ function Invoke-DailyPcCleanup([switch]$Quiet) {
         Write-Host ('C: drive free space: ' + $after + ' GB (was ' + $before + ' GB).') -ForegroundColor Green
     }
     if (-not $Quiet) { Write-Host 'Daily PC cleanup finished.' -ForegroundColor Green }
+}
+
+# ---------------------------------------------------------------------
+# Viber speed-up: compact Viber's message database with Windows' own SQLite
+# (winsqlite3.dll, no extra software), after a backup and an integrity check.
+# ---------------------------------------------------------------------
+function Initialize-PcCareSqlite {
+    if ('PcCareSqlite' -as [type]) { return $true }
+    try {
+        Add-Type -Language CSharp -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class PcCareSqlite {
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_open_v2")] static extern int Open(byte[] file, out IntPtr db, int flags, IntPtr vfs);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_close")] static extern int Close(IntPtr db);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_busy_timeout")] static extern int BusyTimeout(IntPtr db, int ms);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_prepare_v2")] static extern int Prepare(IntPtr db, byte[] sql, int n, out IntPtr stmt, IntPtr tail);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_step")] static extern int Step(IntPtr stmt);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_text")] static extern IntPtr ColumnText(IntPtr stmt, int i);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_finalize")] static extern int Finalize(IntPtr stmt);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_errmsg")] static extern IntPtr ErrMsg(IntPtr db);
+    static byte[] U(string s) { return Encoding.UTF8.GetBytes(s + "\0"); }
+    static string S(IntPtr p) {
+        if (p == IntPtr.Zero) return null;
+        int len = 0; while (Marshal.ReadByte(p, len) != 0) len++;
+        byte[] b = new byte[len]; Marshal.Copy(p, b, 0, len); return Encoding.UTF8.GetString(b);
+    }
+    // Runs one SQL statement and returns the first column of the first row (or "" when no row).
+    // readOnly = true opens with SQLITE_OPEN_READONLY (1); otherwise READWRITE (2).
+    public static string Run(string path, string sql, bool readOnly) {
+        IntPtr db;
+        int flags = readOnly ? 1 : (System.IO.File.Exists(path) ? 2 : 6);
+        int rc = Open(U(path), out db, flags, IntPtr.Zero);
+        if (rc != 0) { string e = S(ErrMsg(db)); Close(db); throw new Exception("open failed: " + e); }
+        try {
+            BusyTimeout(db, 15000);
+            IntPtr stmt;
+            rc = Prepare(db, U(sql), -1, out stmt, IntPtr.Zero);
+            if (rc != 0) throw new Exception("prepare failed: " + S(ErrMsg(db)));
+            try {
+                rc = Step(stmt);
+                if (rc == 100) return S(ColumnText(stmt, 0)) ?? "";
+                if (rc == 101) return "";
+                throw new Exception("step failed: " + S(ErrMsg(db)));
+            } finally { Finalize(stmt); }
+        } finally { Close(db); }
+    }
+}
+'@
+        return $true
+    } catch { return $false }
+}
+
+function Get-ViberDbPath($Profile) {
+    if (-not $Profile.LocalPath) { return $null }
+    $root = Join-Path $Profile.LocalPath 'AppData\Roaming\ViberPC'
+    $db = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'viber.db' -Force -ErrorAction SilentlyContinue | Sort-Object Length -Descending | Select-Object -First 1)
+    if ($db.Count) { return $db[0].FullName }
+    return $null
+}
+function Show-ViberMenu {
+    while ($true) {
+        Clear-Host
+        Write-Header 'VIBER PROBLEM'
+        Write-Host '  1. Viber is stuck / not responding   [Restart Viber - 1 min]' -ForegroundColor Green
+        Write-Host '  2. Viber is slow (chats, sending)    [Speed up Viber - 2-5 min]' -ForegroundColor Green
+        Write-Host '  0. Back'
+        switch (Read-MenuChoice) {
+            '1' { Show-ActionInfo 'Closes Viber, clears its stuck screen files and opens it again.' 'Chats, photos, contacts and your Viber account.' 'A call that is going on right now.' 'About 1 minute.'; Invoke-ViberFix 'Full'; Ensure-ViberStartup; Wait-Back }
+            '2' { Invoke-ViberSpeedUp; Wait-Back }
+            '0' { return }
+            default { Write-Host 'Choose a number from the list.' -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
+        }
+    }
+}
+function Invoke-ViberSpeedUp {
+    Write-Header 'SPEED UP VIBER'
+    $profile = Get-InteractiveProfile
+    $exe = Find-ViberExe -ProfilePath $profile.LocalPath
+    $db = Get-ViberDbPath $profile
+    if (-not $exe -or -not $db) { Write-Skip 'Viber or its message database was not found on this PC.'; return }
+    if (-not (Initialize-PcCareSqlite)) { Write-Skip 'Windows database engine (winsqlite3) is not available on this PC.'; return }
+    if (-not (Confirm-Action 'Closes Viber, tidies and shrinks its message database, removes picture previews older than 30 days, then opens Viber again.' 'All chats, messages, groups, contacts and your Viber account. A backup of the database is made first.' 'A call that is going on right now. Old picture previews load again when you open them.' '2-5 minutes. Do not use Viber until it opens again.')) { return }
+    $dbSize = (Get-Item -LiteralPath $db).Length
+    $free = Get-CFreeGB
+    if ($free -ne $null -and ($free * 1GB) -lt ($dbSize * 2 + 1GB)) { Write-Skip 'Not enough free space on C: for a safe backup. Run "1. Daily PC cleanup" first.'; return }
+    if (-not (Stop-ViberSafely)) { Write-Skip 'Viber could not be closed. Nothing was changed.'; return }
+    Start-Sleep -Seconds 3
+
+    $backupRoot = Join-Path $profile.LocalPath 'AppData\Local\Office-PC-Care-Toolkit\ViberDbBackup'
+    Remove-Item -LiteralPath $backupRoot -Recurse -Force -ErrorAction SilentlyContinue   # keep only the newest backup
+    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+    $parts = @(@($db, ($db + '-wal'), ($db + '-shm')) | Where-Object { Test-Path -LiteralPath $_ })
+    try { foreach ($p in $parts) { Copy-Item -LiteralPath $p -Destination $backupRoot -Force -ErrorAction Stop } }
+    catch { Write-Skip ('Backup failed, nothing was changed: ' + $_.Exception.Message); Start-ViberAgain $exe; return }
+    Write-Done ('Backup saved: ' + $backupRoot)
+
+    $before = [int64](($parts | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum)
+    $ok = $false
+    try {
+        Write-Host 'Checking the database...' -ForegroundColor Cyan
+        $check = [PcCareSqlite]::Run($db, 'PRAGMA quick_check', $true)
+        if ($check -ne 'ok') { throw ('Viber database check did not pass (' + $check + '). It was left unchanged.') }
+        Write-Host 'Tidying the database (this is the slow part)...' -ForegroundColor Cyan
+        [void][PcCareSqlite]::Run($db, 'PRAGMA wal_checkpoint(TRUNCATE)', $false)
+        [void][PcCareSqlite]::Run($db, 'VACUUM', $false)
+        [void][PcCareSqlite]::Run($db, 'ANALYZE', $false)
+        [void][PcCareSqlite]::Run($db, 'PRAGMA wal_checkpoint(TRUNCATE)', $false)
+        $after = [PcCareSqlite]::Run($db, 'PRAGMA quick_check', $true)
+        if ($after -ne 'ok') { throw 'Database check after tidying did not pass.' }
+        $ok = $true
+    } catch {
+        Write-Skip $_.Exception.Message
+        foreach ($p in @(Get-ChildItem -LiteralPath $backupRoot -File)) { try { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path (Split-Path -Parent $db) $p.Name) -Force } catch {} }
+        Write-Note 'The original database was put back from the backup.'
+    }
+    if ($ok) {
+        $now = [int64]((@($db, ($db + '-wal'), ($db + '-shm')) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum)
+        Write-Done ('Viber database tidied: ' + [math]::Round($before / 1MB) + ' MB -> ' + [math]::Round($now / 1MB) + ' MB.')
+        $thumbs = Join-Path (Split-Path -Parent $db) 'Thumbnails'
+        if (Test-Path -LiteralPath $thumbs) { [void](Remove-OldFiles -Path $thumbs -OlderThanDays 30 -Label 'Old picture previews') }
+    }
+    Start-ViberAgain $exe
 }
 
 $script:UpdateTask = 'Office PC Care Toolkit - Update Check'
@@ -2019,7 +2152,7 @@ while (-not $exitToolkit) {
         '3'  { Invoke-SafeAction { Show-FrozenMenu } }
         '4'  { Invoke-SafeAction { Show-OutlookMenu } }
         '5'  { Invoke-SafeAction { Show-OfficeMenu } }
-        '6'  { Invoke-SafeAction { Show-ActionInfo 'Closes Viber, clears its stuck screen files and opens it again.' 'Chats, photos, contacts and your Viber account.' 'A call that is going on right now.' 'About 1 minute.'; Invoke-ViberFix 'Full'; Ensure-ViberStartup; Wait-Back } }
+        '6'  { Invoke-SafeAction { Show-ViberMenu } }
         '7'  { Invoke-SafeAction { Show-InternetMenu } }
         '8'  { Invoke-SafeAction { Show-VpnMenu } }
         '9'  { Invoke-SafeAction { Show-DeepRepairMenu } }
