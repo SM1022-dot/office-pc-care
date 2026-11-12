@@ -91,6 +91,12 @@
   }
   function num(v, d) { return v == null || isNaN(v) ? '-' : Number(v).toFixed(d == null ? 1 : d); }
   function cDrive(r) { var c = ((r.hardware || {}).drives || []).filter(function (x) { return x.id === 'C:'; })[0]; return c || null; }
+  function bsCounts(cr) {
+    cr = cr || {};
+    var real = cr.realBlueScreens30d, power = cr.powerLoss30d;
+    if (real == null) { real = (cr.lastBlueScreens || []).filter(function (x) { return Number(x.id) === 1001; }).length; power = Math.max(0, (cr.blueScreens30d || 0) - real); }
+    return { real: real || 0, power: power || 0 };
+  }
   function cls(ok, warn) { return ok ? 'ok' : (warn ? 'warn' : 'bad'); }
 
   function api(method, path, body) {
@@ -127,14 +133,14 @@
     var today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' });
     var seenToday = pcs.filter(function (p) { return p.latest.reportDate === today; }).length;
     var onLatest = pcs.filter(function (p) { return Number(p.latest.build) >= state.latestBuild; }).length;
-    var bsod = pcs.filter(function (p) { return ((p.latest.crashes || {}).blueScreens30d || 0) > 0; }).length;
+    var bsod = pcs.filter(function (p) { return bsCounts(p.latest.crashes).real > 0; }).length;
     var lowDisk = pcs.filter(function (p) { var c = cDrive(p.latest); return c && c.freeGB < 15; }).length;
     $('updated').textContent = 'Updated ' + bdTime(state.data.generated) + '  -  latest toolkit build ' + state.latestBuild;
     $('stats').innerHTML = [
       ['PCs with toolkit', pcs.length, ''],
       ['Reported today', seenToday, seenToday === pcs.length ? 'ok' : 'warn'],
       ['On latest build', onLatest + ' / ' + pcs.length, onLatest === pcs.length ? 'ok' : 'warn'],
-      ['Blue screens (30 days)', bsod + ' PC', bsod ? 'bad' : 'ok'],
+      ['Real blue screens (30 days)', bsod + ' PC', bsod ? 'bad' : 'ok'],
       ['C: under 15 GB free', lowDisk + ' PC', lowDisk ? 'warn' : 'ok']
     ].map(function (s) { return '<div class="stat"><span class="muted">' + esc(s[0]) + '</span><b class="' + s[2] + '">' + esc(s[1]) + '</b></div>'; }).join('');
 
@@ -146,7 +152,7 @@
       return [p.pc, l.label, l.team, l.note, r.user, r.userFullName, (r.ipv4 || []).join(' '), r.timeZone].join(' ').toLowerCase().indexOf(q) >= 0;
     });
     shown.sort(function (a, b) { return String((a.label || {}).label || '~' + a.pc).localeCompare(String((b.label || {}).label || '~' + b.pc)); });
-    var head = '<tr><th>Person / desk</th><th>Team</th><th>PC</th><th>Windows user</th><th>Build</th><th>Last report</th><th>Running for</th><th>RAM free</th><th>C: free</th><th>Outlook mail</th><th>Viber</th><th>Blue screens 30d</th><th>App crashes 7d</th></tr>';
+    var head = '<tr><th>Person / desk</th><th>Team</th><th>PC</th><th>Windows user</th><th>Build</th><th>Last report</th><th>Running for</th><th>RAM free</th><th>C: free</th><th>Outlook mail</th><th>Viber</th><th>Blue screen / power-off 30d</th><th>App crashes 7d</th></tr>';
     $('pcTable').innerHTML = head + shown.map(function (p) {
       var r = p.latest, m = r.memory || {}, c = cDrive(r), cr = r.crashes || {}, l = p.label || {};
       var appCr = (cr.appCrashes7d || []).reduce(function (a, x) { return a + (x.count || 0); }, 0);
@@ -167,7 +173,7 @@
           var data = (vb.dataMB || 0) / 1024;
           return '<td class="' + cls(data < 1, data < 3) + '">' + num(data) + ' GB data<div class="muted">' + (vb.running ? esc(vb.ramMB) + ' MB RAM' : 'not running') + '</div></td>';
         })(r.viber) +
-        '<td class="' + ((cr.blueScreens30d || 0) ? 'bad' : 'ok') + '">' + esc(cr.blueScreens30d || 0) + '</td>' +
+        (function (b) { return '<td><span class="' + (b.real ? 'bad' : 'ok') + '">' + b.real + ' blue screen</span><div class="' + (b.power ? 'warn' : 'muted') + '">' + b.power + ' power-off</div></td>'; })(bsCounts(cr)) +
         '<td class="' + (appCr ? 'warn' : 'ok') + '">' + appCr + '</td></tr>';
     }).join('');
     Array.prototype.forEach.call(document.querySelectorAll('tr.row'), function (tr) { tr.onclick = function () { showDetail(tr.getAttribute('data-pc')); }; });

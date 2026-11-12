@@ -1051,6 +1051,9 @@ function Get-PcReportData {
     try { $apps = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000, 1002; StartTime = (Get-Date).AddDays(-7) } -ErrorAction Stop | Group-Object { [string]$_.Properties[0].Value } | Sort-Object Count -Descending | Select-Object -First 10 | ForEach-Object { [ordered]@{ app = $_.Name; count = $_.Count } }) } catch {}
     $r.crashes = [ordered]@{
         blueScreens30d = $bs.Count
+        # 1001 = real blue screen (BugCheck). 41 = PC lost power or was switched off without shutting down.
+        realBlueScreens30d = @($bs | Where-Object { $_.Id -eq 1001 }).Count
+        powerLoss30d = @($bs | Where-Object { $_.Id -eq 41 }).Count
         lastBlueScreens = @($bs | Select-Object -First 5 | ForEach-Object { $msg = ([string]$_.Message -split "`r?`n")[0]; if ($msg.Length -gt 160) { $msg = $msg.Substring(0, 160) }; [ordered]@{ time = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); id = $_.Id; msg = $msg } })
         appCrashes7d = $apps
     }
