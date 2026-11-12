@@ -1,11 +1,11 @@
 {
-    "build":  18,
-    "published":  "2026-11-12T14:14:43Z",
-    "notes":  "Report samples CPU per app and disk busy; dashboard shows them; toolkit reopens Viber maximized at above-normal priority",
+    "build":  19,
+    "published":  "2026-11-12T15:21:14Z",
+    "notes":  "Report disk health details and VM file location; text report adds CPU/disk sample; dashboard flags disk warnings",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "b258dd7c4dd2ff4ece26fc511fce9a5475e4bc6d830cfd460714b1c8bc2607de"
+                      "sha256":  "09e225c94d2be6eeffbb1c2a5a2774590b8b320cbef8a6d332a852658441a639"
                   },
                   {
                       "name":  "config.json",
