@@ -1,11 +1,11 @@
 {
-    "build":  14,
-    "published":  "2026-11-12T13:28:04Z",
-    "notes":  "Separate real blue screens from power-offs in report and dashboard",
+    "build":  15,
+    "published":  "2026-11-12T13:33:01Z",
+    "notes":  "Viber menu: Speed up Viber compacts its database with Windows SQLite after a backup and check, removes old previews; rep",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "02fa6569366865b309fa4bb6ec16a026424858d3725ed1207a18cedbf3ee8e40"
+                      "sha256":  "1e14d9a0bad42184c9ad48d2024d5c8de0f045eab6521305469ba03d7e42e529"
                   },
                   {
                       "name":  "config.json",

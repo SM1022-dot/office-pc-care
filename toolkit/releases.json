@@ -68,5 +68,10 @@
         "build":  14,
         "published":  "2026-11-12T13:28:04Z",
         "notes":  "Separate real blue screens from power-offs in report and dashboard"
+    },
+    {
+        "build":  15,
+        "published":  "2026-11-12T13:33:01Z",
+        "notes":  "Viber menu: Speed up Viber compacts its database with Windows SQLite after a backup and check, removes old previews; rep"
     }
 ]
