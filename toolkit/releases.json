@@ -53,5 +53,10 @@
         "build":  11,
         "published":  "2026-11-11T15:53:31Z",
         "notes":  "Report on install and on every toolkit open, silent update on open, self-repair missing tasks, never downgrade; dashboar"
+    },
+    {
+        "build":  12,
+        "published":  "2026-11-12T12:49:52Z",
+        "notes":  "Daily PC cleanup at the top of the menu, runs in background mode so Viber keeps working; Auto Care uses it too"
     }
 ]

@@ -1,11 +1,11 @@
 {
-    "build":  11,
-    "published":  "2026-11-11T15:53:31Z",
-    "notes":  "Report on install and on every toolkit open, silent update on open, self-repair missing tasks, never downgrade; dashboar",
+    "build":  12,
+    "published":  "2026-11-12T12:49:52Z",
+    "notes":  "Daily PC cleanup at the top of the menu, runs in background mode so Viber keeps working; Auto Care uses it too",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "869d34dd21dfac1147ed659ac8742fec258b0bf106b0b603817b2e9db1a53287"
+                      "sha256":  "0ba37e776d56384f8c1009b7abb398fe5c827ad2515c294201645fb960dede57"
                   },
                   {
                       "name":  "config.json",
