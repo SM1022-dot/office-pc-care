@@ -1151,7 +1151,7 @@ function Get-ViberStats($Profile) {
             $pages = [double][PcCareSqlite]::Run($dbPath, 'PRAGMA page_count', $true)
             $freeP = [double][PcCareSqlite]::Run($dbPath, 'PRAGMA freelist_count', $true)
             if ($pages -gt 0) { $v.dbFreePercent = [math]::Round(100 * $freeP / $pages, 1) }
-        } catch { $v.dbFreePercent = $null }
+        } catch { $v.dbFreePercent = $null; $v.dbEncrypted = ($_.Exception.Message -match 'not a database|encrypted') }
     }
     $bk = Join-Path $Profile.LocalPath 'AppData\Local\Office-PC-Care-Toolkit\ViberCacheBackup'
     if (Test-Path -LiteralPath $bk) { $v.toolkitCacheBackupMB = [int]((Get-ChildItem -LiteralPath $bk -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB) }
@@ -1811,9 +1811,15 @@ function Invoke-ViberSpeedUp {
 
     $before = [int64](($parts | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum)
     $ok = $false
+    $encrypted = $false
     try {
         Write-Host 'Checking the database...' -ForegroundColor Cyan
-        $check = [PcCareSqlite]::Run($db, 'PRAGMA quick_check', $true)
+        try { $check = [PcCareSqlite]::Run($db, 'PRAGMA quick_check', $true) }
+        catch {
+            # Newer Viber versions encrypt viber.db; it cannot be opened or compacted by anyone but Viber.
+            if ($_.Exception.Message -match 'not a database|encrypted') { $encrypted = $true; throw 'Viber keeps its message database encrypted, so it cannot be compacted. The database was not changed.' }
+            throw
+        }
         if ($check -ne 'ok') { throw ('Viber database check did not pass (' + $check + '). It was left unchanged.') }
         Write-Host 'Tidying the database (this is the slow part)...' -ForegroundColor Cyan
         [void][PcCareSqlite]::Run($db, 'PRAGMA wal_checkpoint(TRUNCATE)', $false)
@@ -1825,12 +1831,17 @@ function Invoke-ViberSpeedUp {
         $ok = $true
     } catch {
         Write-Skip $_.Exception.Message
-        foreach ($p in @(Get-ChildItem -LiteralPath $backupRoot -File)) { try { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path (Split-Path -Parent $db) $p.Name) -Force } catch {} }
-        Write-Note 'The original database was put back from the backup.'
+        if (-not $encrypted) {
+            foreach ($p in @(Get-ChildItem -LiteralPath $backupRoot -File)) { try { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path (Split-Path -Parent $db) $p.Name) -Force } catch {} }
+            Write-Note 'The original database was put back from the backup.'
+        }
     }
+    if ($encrypted) { Remove-Item -LiteralPath $backupRoot -Recurse -Force -ErrorAction SilentlyContinue }   # nothing was changed, backup not needed
     if ($ok) {
         $now = [int64]((@($db, ($db + '-wal'), ($db + '-shm')) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum)
         Write-Done ('Viber database tidied: ' + [math]::Round($before / 1MB) + ' MB -> ' + [math]::Round($now / 1MB) + ' MB.')
+    }
+    if ($ok -or $encrypted) {
         $thumbs = Join-Path (Split-Path -Parent $db) 'Thumbnails'
         if (Test-Path -LiteralPath $thumbs) { [void](Remove-OldFiles -Path $thumbs -OlderThanDays 30 -Label 'Old picture previews') }
     }
