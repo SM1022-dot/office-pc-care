@@ -3044,6 +3044,7 @@ function Get-PcReportData {
         updateTask = (& $hasTask 'Office PC Care Toolkit - Update Check')
     }
     $r.chromeExtensions = @(Get-InstalledChromeExtensions)
+    $r.viber = Get-ViberStats $profile
     # Same details as the desktop "Send report to IT" file.
     try {
         $bios = Get-CimInstance Win32_BIOS
@@ -3067,6 +3068,52 @@ function Get-PcReportData {
     if ($profile.LocalPath) { $r.startupFolder = @(Get-ChildItem -LiteralPath (Join-Path $profile.LocalPath 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup') -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
     $r.recentLogs = @(Get-ChildItem -LiteralPath $script:LogRoot -File -Filter 'PC-Care_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 5 | ForEach-Object { $_.Name })
     return $r
+}
+function Get-ViberStats($Profile) {
+    # Sizes only: no chat text, file contents or phone numbers (digits in names are masked).
+    $mask = { param($s) ([string]$s) -replace '\d', '#' }
+    $v = [ordered]@{ installed = $false }
+    $proc = @(Get-Process -Name 'Viber' -ErrorAction SilentlyContinue)
+    if ($proc.Count) {
+        $v.running = $true
+        $v.ramMB = [int](($proc | Measure-Object WorkingSet64 -Sum).Sum / 1MB)
+        try { $v.runningHours = [math]::Round(((Get-Date) - ($proc | Sort-Object StartTime | Select-Object -First 1).StartTime).TotalHours, 1) } catch {}
+    } else { $v.running = $false }
+    if (-not $Profile.LocalPath) { return $v }
+    $exe = Find-ViberExe -ProfilePath $Profile.LocalPath
+    if ($exe) { $v.installed = $true; $v.version = [string](Get-Item -LiteralPath $exe).VersionInfo.ProductVersion }
+    $root = Join-Path $Profile.LocalPath 'AppData\Roaming\ViberPC'
+    if (Test-Path -LiteralPath $root) {
+        $all = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue)
+        $v.dataMB = [int](($all | Measure-Object Length -Sum).Sum / 1MB)
+        $v.dataFiles = $all.Count
+        $v.largestFiles = @($all | Sort-Object Length -Descending | Select-Object -First 6 | ForEach-Object {
+            [ordered]@{ file = (& $mask $_.FullName.Substring($root.Length).TrimStart('\')); mb = [math]::Round($_.Length / 1MB, 1); modified = $_.LastWriteTime.ToUniversalTime().ToString('yyyy-MM-dd') } })
+        # One pass: add each file to its first-level and second-level folder (fast even with many files).
+        $agg = @{}
+        foreach ($f in $all) {
+            $segs = $f.FullName.Substring($root.Length).TrimStart('\').Split('\')
+            if ($segs.Count -lt 2) { continue }
+            $keys = @($segs[0])
+            if ($segs.Count -ge 3) { $keys += ($segs[0] + '\' + $segs[1]) }
+            foreach ($k in $keys) {
+                if (-not $agg.ContainsKey($k)) { $agg[$k] = @{ b = [int64]0; n = 0 } }
+                $agg[$k].b += $f.Length; $agg[$k].n++
+            }
+        }
+        $v.folders = @($agg.GetEnumerator() | Sort-Object { $_.Value.b } -Descending | Select-Object -First 15 | ForEach-Object {
+            [ordered]@{ folder = (& $mask $_.Key); mb = [int]($_.Value.b / 1MB); files = $_.Value.n } })
+        $dbs = @($all | Where-Object { $_.Name -match '(?i)\.db(-wal|-shm)?$' })
+        $v.databaseMB = [int](($dbs | Measure-Object Length -Sum).Sum / 1MB)
+    }
+    $docs = Join-Path $Profile.LocalPath 'Documents\ViberDownloads'
+    if (Test-Path -LiteralPath $docs) {
+        $dl = @(Get-ChildItem -LiteralPath $docs -Recurse -File -Force -ErrorAction SilentlyContinue)
+        $v.downloadsMB = [int](($dl | Measure-Object Length -Sum).Sum / 1MB); $v.downloadsFiles = $dl.Count
+    }
+    $bk = Join-Path $Profile.LocalPath 'AppData\Local\Office-PC-Care-Toolkit\ViberCacheBackup'
+    if (Test-Path -LiteralPath $bk) { $v.toolkitCacheBackupMB = [int]((Get-ChildItem -LiteralPath $bk -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB) }
+    return $v
 }
 function Send-PcReport([switch]$Force) {
     # Once a day, plus right after the toolkit build changes (so the dashboard shows the update at once).
@@ -3141,7 +3188,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '12'
+$script:BuildStamp     = '13'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3879,7 +3926,7 @@ switch ($script:Mode) {
         exit 0
     }
     'allow-extension' { Add-LocalChromeExtension $script:ExtraArg; [void](Read-Host 'Press Enter to close'); exit 0 }
-    'report' { Send-PcReport -Force; try { Stop-Transcript | Out-Null } catch {}; exit 0 }
+    'report' { Set-BackgroundMode $true; Send-PcReport -Force; try { Stop-Transcript | Out-Null } catch {}; exit 0 }
     'test'   { return }
 }
 
@@ -3900,7 +3947,11 @@ if (Test-Path -LiteralPath $script:SetupMarker) {
     if (Install-ToolkitCopy) {
         $cmdExe = Join-Path $env:WINDIR 'System32\cmd.exe'
         try { Start-Process -FilePath $cmdExe -ArgumentList ('/d /c ""' + $script:InstalledBat + '" update"') -WindowStyle Hidden } catch {}
-        try { Start-Process -FilePath $cmdExe -ArgumentList ('/d /c ""' + $script:InstalledBat + '" report"') -WindowStyle Hidden } catch {}
+        # Fresh report at most every 2 hours from here (Auto Care still sends the daily one).
+        $lastReport = Get-Item -LiteralPath $script:ReportDateFile -ErrorAction SilentlyContinue
+        if (-not $lastReport -or $lastReport.LastWriteTime -lt (Get-Date).AddHours(-2)) {
+            try { Start-Process -FilePath $cmdExe -ArgumentList ('/d /c ""' + $script:InstalledBat + '" report"') -WindowStyle Hidden } catch {}
+        }
     }
 }
 

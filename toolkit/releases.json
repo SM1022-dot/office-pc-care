@@ -58,5 +58,10 @@
         "build":  12,
         "published":  "2026-11-12T12:49:52Z",
         "notes":  "Daily PC cleanup at the top of the menu, runs in background mode so Viber keeps working; Auto Care uses it too"
+    },
+    {
+        "build":  13,
+        "published":  "2026-11-12T12:59:53Z",
+        "notes":  "Report measures Viber data, database, downloads, RAM and version; dashboard Viber column; background report at most ever"
     }
 ]
