@@ -641,7 +641,7 @@ function Invoke-FullOptimization {
     Set-OfficeLightSettings $hive
     Write-Done 'Office uses less graphics power. Outlook RSS sync is off.'
     Write-Step '[8/8] Clean temporary files'
-    Invoke-DailyCare
+    Invoke-DailyPcCleanup -Quiet
     Set-UndoFlag 'Optimized' $true
     Write-Host ''
     Write-Host 'Full speed setup finished. Restart the PC once so every change takes effect.' -ForegroundColor Green
@@ -1601,6 +1601,59 @@ function Remove-VmwareTuning {
     Set-UndoFlag 'VMwareConfig' $null
     if ($n -gt 0) { Write-Done ('VMware memory settings returned to normal in ' + $n + ' file(s).') }
 }
+# ---------------------------------------------------------------------
+# Daily PC cleanup: light and always in Windows "background mode" (lowest CPU, disk and memory
+# priority), so Viber, Outlook and the VM keep working while it runs. Use this instead of
+# Windows Disk Cleanup ("Clean up system files" saturates the disk on these PCs for many minutes).
+# ---------------------------------------------------------------------
+function Set-BackgroundMode([bool]$On) {
+    try {
+        if (-not ('PcCare.Prio' -as [type])) {
+            Add-Type -Namespace PcCare -Name Prio -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool SetPriorityClass(System.IntPtr h, uint c); [DllImport("kernel32.dll")] public static extern System.IntPtr GetCurrentProcess();'
+        }
+        $mode = if ($On) { [uint32]0x00100000 } else { [uint32]0x00200000 }   # PROCESS_MODE_BACKGROUND_BEGIN / _END
+        [void][PcCare.Prio]::SetPriorityClass([PcCare.Prio]::GetCurrentProcess(), $mode)
+    } catch {}
+}
+function Get-CFreeGB {
+    try { return [math]::Round((Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $env:SystemDrive)).FreeSpace / 1GB, 1) } catch { return $null }
+}
+function Invoke-DailyPcCleanup([switch]$Quiet) {
+    if (-not $Quiet) {
+        Write-Header 'DAILY PC CLEANUP'
+        Show-ActionInfo 'Cleans temporary files, old update files and caches. Runs slowly in the background so your work keeps going.' 'Your files, Downloads, Recycle Bin, emails, Viber chats, browser passwords, cookies and logins (WhatsApp Web stays logged in).' 'Nothing.' '1-2 minutes.'
+    }
+    $before = Get-CFreeGB
+    Set-BackgroundMode $true
+    try {
+        Invoke-DailyCare
+        $profile = Get-InteractiveProfile
+        $extra = @()
+        if ($profile.LocalPath) {
+            $local = Join-Path $profile.LocalPath 'AppData\Local'
+            $extra += @{ Path = (Join-Path $local 'Microsoft\Windows\INetCache'); Days = 3; Label = 'Old internet cache' }
+            $extra += @{ Path = (Join-Path $local 'D3DSCache'); Days = 7; Label = 'Old graphics cache' }
+            $extra += @{ Path = (Join-Path $local 'Microsoft\Windows\WER'); Days = 14; Label = 'Old app error reports' }
+            if (@(Get-Process -Name 'chrome' -ErrorAction SilentlyContinue).Count -eq 0) {
+                $chromeData = Join-Path $local 'Google\Chrome\User Data'
+                foreach ($p in @(Get-ChildItem -LiteralPath $chromeData -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' })) {
+                    # Cache files only. Cookies, logins, IndexedDB (WhatsApp Web) and history are never touched.
+                    $extra += @{ Path = (Join-Path $p.FullName 'Cache\Cache_Data'); Days = 1; Label = ('Chrome cache (' + $p.Name + ')') }
+                    $extra += @{ Path = (Join-Path $p.FullName 'Code Cache'); Days = 1; Label = ('Chrome code cache (' + $p.Name + ')') }
+                    $extra += @{ Path = (Join-Path $p.FullName 'GPUCache'); Days = 1; Label = ('Chrome graphics cache (' + $p.Name + ')') }
+                }
+            } elseif (-not $Quiet) { Write-Note 'Chrome is open, so its cache was skipped this time.' }
+        }
+        foreach ($t in $extra) { [void](Remove-OldFiles -Path $t.Path -OlderThanDays $t.Days -Label $t.Label) }
+    } finally { Set-BackgroundMode $false }
+    $after = Get-CFreeGB
+    if ($before -ne $null -and $after -ne $null) {
+        Write-Host ''
+        Write-Host ('C: drive free space: ' + $after + ' GB (was ' + $before + ' GB).') -ForegroundColor Green
+    }
+    if (-not $Quiet) { Write-Host 'Daily PC cleanup finished.' -ForegroundColor Green }
+}
+
 $script:UpdateTask = 'Office PC Care Toolkit - Update Check'
 function Register-UpdateCheckTask {
     # Every 15 minutes, silently (SYSTEM, no window): download the small signed manifest; only when IT has
@@ -1708,8 +1761,8 @@ function Invoke-AutoCare {
         Start-Process -FilePath (Join-Path $env:WINDIR 'System32\cmd.exe') -ArgumentList ('/d /c ""' + $script:InstalledBat + '" auto"') -WindowStyle Hidden -Wait
         return
     }
-    if (-not (Test-Path -LiteralPath $script:SetupMarker)) { Write-Skip 'PC setup has not been run. Auto Care only cleans temporary files.'; Invoke-DailyCare; return }
-    Invoke-DailyCare
+    if (-not (Test-Path -LiteralPath $script:SetupMarker)) { Write-Skip 'PC setup has not been run. Auto Care only cleans temporary files.'; Invoke-DailyPcCleanup -Quiet; return }
+    Invoke-DailyPcCleanup -Quiet
     Invoke-ApplyAll
     if (Get-UndoFlag 'UpdatesOff') { Set-WindowsUpdateOff }
     if (Get-UndoFlag 'EdgeOff') { [void](Set-EdgeOff) }
@@ -1748,7 +1801,7 @@ function Show-SlowMenu {
         Write-Host '  4. Choose startup apps       [Pick what opens with Windows]'
         Write-Host '  0. Back'
         switch (Read-MenuChoice) {
-            '1' { Show-ActionInfo 'Deletes old temporary and error-report files.' 'Your files, Downloads, browser data, emails and chats.' 'Nothing.' 'About 1 minute.'; Invoke-DailyCare; Wait-Back }
+            '1' { Show-ActionInfo 'Deletes old temporary and error-report files.' 'Your files, Downloads, browser data, emails and chats.' 'Nothing.' 'About 1-2 minutes.'; Invoke-DailyPcCleanup -Quiet; Wait-Back }
             '2' { if (Confirm-Action 'Makes Windows lighter: fewer effects, no background extras, high performance power, bigger memory file, VMware memory in RAM, non-work startup apps off, temp clean-up.' 'Files, emails, chats, VPN, the VM and every work app.' 'Nothing. Restart once to finish.' 'About 3 minutes.') { Invoke-FullOptimization }; Wait-Back }
             '3' { Show-RamRelief; Wait-Back }
             '4' { Show-StartupMenu }
@@ -1884,38 +1937,42 @@ if (Test-Path -LiteralPath $script:SetupMarker) {
 
 $exitToolkit = $false
 while (-not $exitToolkit) {
+    # (Daily PC cleanup is option 1; see Invoke-DailyPcCleanup.)
     Clear-Host
     Write-Host '============================================================' -ForegroundColor DarkCyan
     Write-Host '              OFFICE PC CARE TOOLKIT v13' -ForegroundColor Cyan
     Write-Host '============================================================' -ForegroundColor DarkCyan
     Write-Host ("  PC: {0}   build {1}      What is the problem?" -f $env:COMPUTERNAME, (Get-InstalledBuild)) -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '   1. My PC is slow' -ForegroundColor Green
-    Write-Host '   2. An app is frozen / not responding' -ForegroundColor Green
-    Write-Host '   3. Outlook problem' -ForegroundColor Green
-    Write-Host '   4. Word / Excel problem' -ForegroundColor Green
-    Write-Host '   5. Viber problem' -ForegroundColor Green
-    Write-Host '   6. Internet not working' -ForegroundColor Green
-    Write-Host '   7. VPN not connecting' -ForegroundColor Green
-    Write-Host '   8. Deep Windows repair      [30-60 min]' -ForegroundColor Yellow
-    Write-Host '   9. Send report to IT' -ForegroundColor Cyan
-    Write-Host '  10. Run PC setup again       [3-5 min]' -ForegroundColor Cyan
+    Write-Host '   1. Daily PC cleanup         [Do this every day - 1-2 min]' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '   2. My PC is slow' -ForegroundColor Green
+    Write-Host '   3. An app is frozen / not responding' -ForegroundColor Green
+    Write-Host '   4. Outlook problem' -ForegroundColor Green
+    Write-Host '   5. Word / Excel problem' -ForegroundColor Green
+    Write-Host '   6. Viber problem' -ForegroundColor Green
+    Write-Host '   7. Internet not working' -ForegroundColor Green
+    Write-Host '   8. VPN not connecting' -ForegroundColor Green
+    Write-Host '   9. Deep Windows repair      [30-60 min]' -ForegroundColor Yellow
+    Write-Host '  10. Send report to IT' -ForegroundColor Cyan
+    Write-Host '  11. Run PC setup again       [3-5 min]' -ForegroundColor Cyan
     Write-Host ''
     Write-Host '   0. Exit'
     Write-Host ''
     switch (Read-MenuChoice) {
-        '1'  { Invoke-SafeAction { Show-SlowMenu } }
-        '2'  { Invoke-SafeAction { Show-FrozenMenu } }
-        '3'  { Invoke-SafeAction { Show-OutlookMenu } }
-        '4'  { Invoke-SafeAction { Show-OfficeMenu } }
-        '5'  { Invoke-SafeAction { Show-ActionInfo 'Closes Viber, clears its stuck screen files and opens it again.' 'Chats, photos, contacts and your Viber account.' 'A call that is going on right now.' 'About 1 minute.'; Invoke-ViberFix 'Full'; Ensure-ViberStartup; Wait-Back } }
-        '6'  { Invoke-SafeAction { Show-InternetMenu } }
-        '7'  { Invoke-SafeAction { Show-VpnMenu } }
-        '8'  { Invoke-SafeAction { Show-DeepRepairMenu } }
-        '9'  { Invoke-SafeAction { Invoke-SendReportToIT; Wait-Back } }
-        '10' { Invoke-SafeAction { Invoke-OneTimeSetup; Wait-Back } }
+        '1'  { Invoke-SafeAction { Invoke-DailyPcCleanup; Wait-Back } }
+        '2'  { Invoke-SafeAction { Show-SlowMenu } }
+        '3'  { Invoke-SafeAction { Show-FrozenMenu } }
+        '4'  { Invoke-SafeAction { Show-OutlookMenu } }
+        '5'  { Invoke-SafeAction { Show-OfficeMenu } }
+        '6'  { Invoke-SafeAction { Show-ActionInfo 'Closes Viber, clears its stuck screen files and opens it again.' 'Chats, photos, contacts and your Viber account.' 'A call that is going on right now.' 'About 1 minute.'; Invoke-ViberFix 'Full'; Ensure-ViberStartup; Wait-Back } }
+        '7'  { Invoke-SafeAction { Show-InternetMenu } }
+        '8'  { Invoke-SafeAction { Show-VpnMenu } }
+        '9'  { Invoke-SafeAction { Show-DeepRepairMenu } }
+        '10' { Invoke-SafeAction { Invoke-SendReportToIT; Wait-Back } }
+        '11' { Invoke-SafeAction { Invoke-OneTimeSetup; Wait-Back } }
         '0'  { $exitToolkit = $true }
-        default { Write-Host 'Choose a number from 0 to 10.' -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
+        default { Write-Host 'Choose a number from 0 to 11.' -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
     }
 }
 
