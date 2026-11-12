@@ -296,7 +296,7 @@
           ['Biggest files', list((vb.largestFiles || []).map(function (f) { return esc(f.file) + ' - ' + esc(f.mb) + ' MB <span class="muted">' + esc(f.modified) + '</span>'; }))]
         ]);
       })(r.viber) +
-      '<h3>Outlook</h3>' + kv([['Version', esc(ol.version)], ['Mail files', list((ol.mailFiles || []).map(function (x) { return esc(x.name) + ' - ' + esc(x.mb) + ' MB'; }))]]) +
+      '<h3>Outlook</h3>' + kv([['Version', esc(ol.version)], ['Offline months per account', list((ol.accounts || []).map(function (x) { return esc(x.account) + ' - <span class="' + (x.offlineMonths === 'All' ? 'warn' : 'ok') + '">' + esc(x.offlineMonths) + (x.offlineMonths === 'All' ? '' : ' months') + '</span>'; }))], ['Mail files', list((ol.mailFiles || []).map(function (x) { return esc(x.name) + ' - ' + esc(x.mb) + ' MB'; }))]]) +
       '<h3>Blue screens and sudden restarts (30 days)</h3>' + list((cr.lastBlueScreens || []).map(function (x) { return bdTime(x.time) + ' - Event ' + esc(x.id) + ' ' + esc(x.msg); })) +
       '<h3>App crashes (7 days)</h3>' + list((cr.appCrashes7d || []).map(function (x) { return esc(x.app) + ' - ' + esc(x.count) + 'x'; })) +
       '<h3>Startup</h3>' + kv([
