@@ -1,11 +1,11 @@
 {
-    "build":  15,
-    "published":  "2026-11-12T13:33:01Z",
-    "notes":  "Viber menu: Speed up Viber compacts its database with Windows SQLite after a backup and check, removes old previews; rep",
+    "build":  16,
+    "published":  "2026-11-12T13:52:54Z",
+    "notes":  "Speed up Viber: explain encrypted database, keep it unchanged, still clean old previews",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "1e14d9a0bad42184c9ad48d2024d5c8de0f045eab6521305469ba03d7e42e529"
+                      "sha256":  "532e14f529529c27476084cea23d53aaa169b20f7653e425274fb911f7e9d159"
                   },
                   {
                       "name":  "config.json",
