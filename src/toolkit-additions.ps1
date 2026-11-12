@@ -411,6 +411,7 @@ $done = 0
 while ((Get-Date) -lt $deadline -and $done -lt 3) {
     $p = Get-Process -Name 'Viber' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.MainWindowTitle } | Select-Object -First 1
     if ($p) {
+        try { if ($p.PriorityClass -eq 'Normal') { $p.PriorityClass = 'AboveNormal' } } catch {}
         if (-not [PcCare.Win]::IsZoomed($p.MainWindowHandle)) { [void][PcCare.Win]::ShowWindowAsync($p.MainWindowHandle, 3); [void][PcCare.Win]::SetForegroundWindow($p.MainWindowHandle) }
         else { $done++ }
     }
@@ -1216,6 +1217,8 @@ function Invoke-UndoAll {
     Restore-VMwareHostMemory
     foreach ($e in @(Get-UndoFlag 'DefenderExt')) { if ($e) { try { Remove-MpPreference -ExclusionExtension $e -ErrorAction Stop } catch {} } }
     Set-UndoFlag 'DefenderExt' @()
+    foreach ($e in @(Get-UndoFlag 'DefenderPaths')) { if ($e) { try { Remove-MpPreference -ExclusionPath $e -ErrorAction Stop } catch {} } }
+    Set-UndoFlag 'DefenderPaths' @()
     $scheme = Get-UndoFlag 'PowerScheme'
     if ($scheme) { & powercfg.exe /setactive $scheme 2>&1 | Out-Null; Set-UndoFlag 'PowerScheme' $null }
     Remove-Item -LiteralPath $script:SetupMarker -Force -ErrorAction SilentlyContinue
@@ -1864,7 +1867,44 @@ function Register-UpdateCheckTask {
         [void]$svc.GetFolder('\').RegisterTaskDefinition($script:UpdateTask, $def, 6, 'SYSTEM', $null, 5)
     } catch { Write-Skip ('Update check task could not be created: ' + $_.Exception.Message) }
 }
+# ---------------------------------------------------------------------
+# Viber freezes ("Not Responding" for 4-6 s): keep Viber as it is, but stop Defender from
+# scanning its database on every write, give it CPU first, and keep RAM free from Firefox.
+# ---------------------------------------------------------------------
+function Add-ViberDefenderExclusion {
+    if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) { return }
+    $profile = Get-InteractiveProfile
+    if (-not $profile.LocalPath) { return }
+    $path = Join-Path $profile.LocalPath 'AppData\Roaming\ViberPC'
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    try {
+        $existing = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
+        if ($existing -notcontains $path) {
+            Add-MpPreference -ExclusionPath $path -ErrorAction Stop
+            Add-UndoListItem -Name 'DefenderPaths' -Item $path
+            Write-Done 'Defender no longer slows Viber''s message database. Files you download from Viber are still scanned.'
+        }
+    } catch { Write-Skip ('Viber Defender setting not changed: ' + $_.Exception.Message) }
+}
+function Set-ViberPriority {
+    foreach ($p in @(Get-Process -Name 'Viber' -ErrorAction SilentlyContinue)) {
+        try { if ($p.PriorityClass -eq 'Normal') { $p.PriorityClass = 'AboveNormal' } } catch {}
+    }
+}
+function Set-FirefoxMemoryLimits {
+    $ffDir = @((Join-Path $env:ProgramFiles 'Mozilla Firefox'), (Join-Path ${env:ProgramFiles(x86)} 'Mozilla Firefox')) | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ 'firefox.exe')) } | Select-Object -First 1
+    if (-not $ffDir) { return }
+    # Enterprise policy (registry): fewer content processes, unload background tabs when memory is low.
+    $p = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Mozilla\Firefox'
+    $prefs = '{"dom.ipc.processCount":{"Value":4,"Status":"default"},"browser.tabs.unloadOnLowMemory":{"Value":true,"Status":"default"}}'
+    if ((Get-RegValueRaw $p 'Preferences').Value -ne $prefs) {
+        [void](Set-TrackedReg $p 'Preferences' $prefs 'String')
+        Write-Done 'Firefox uses fewer background processes and rests tabs when memory is low (from its next start). Tabs are not closed.'
+    }
+}
+
 function Invoke-UpdateCheck {
+    Set-ViberPriority
     $updated = Invoke-SelfUpdate
     if ($updated -eq $true -and (Test-Path -LiteralPath $script:InstalledBat)) {
         $env:PCTOOLKIT_CHAINED = '1'
@@ -1910,6 +1950,9 @@ function Invoke-ApplyAll {
     Remove-VmwareTuning
     [void](Restore-Tracked { param($id) $id -match 'HiberbootEnabled' })
     if (Test-Path -LiteralPath $script:SetupMarker) { Register-UpdateCheckTask }
+    Add-ViberDefenderExclusion
+    Set-ViberPriority
+    Set-FirefoxMemoryLimits
 }
 function Invoke-OneTimeSetup {
     Write-Header 'PC SETUP'
