@@ -146,7 +146,7 @@
       return [p.pc, l.label, l.team, l.note, r.user, r.userFullName, (r.ipv4 || []).join(' '), r.timeZone].join(' ').toLowerCase().indexOf(q) >= 0;
     });
     shown.sort(function (a, b) { return String((a.label || {}).label || '~' + a.pc).localeCompare(String((b.label || {}).label || '~' + b.pc)); });
-    var head = '<tr><th>Person / desk</th><th>Team</th><th>PC</th><th>Windows user</th><th>Build</th><th>Last report</th><th>Running for</th><th>RAM free</th><th>C: free</th><th>Outlook mail</th><th>Blue screens 30d</th><th>App crashes 7d</th></tr>';
+    var head = '<tr><th>Person / desk</th><th>Team</th><th>PC</th><th>Windows user</th><th>Build</th><th>Last report</th><th>Running for</th><th>RAM free</th><th>C: free</th><th>Outlook mail</th><th>Viber</th><th>Blue screens 30d</th><th>App crashes 7d</th></tr>';
     $('pcTable').innerHTML = head + shown.map(function (p) {
       var r = p.latest, m = r.memory || {}, c = cDrive(r), cr = r.crashes || {}, l = p.label || {};
       var appCr = (cr.appCrashes7d || []).reduce(function (a, x) { return a + (x.count || 0); }, 0);
@@ -162,6 +162,11 @@
         '<td class="' + cls(m.freeGB >= 2, m.freeGB >= 1) + '">' + num(m.freeGB) + ' / ' + num(m.totalGB, 0) + ' GB</td>' +
         '<td class="' + (c ? cls(c.freeGB >= 25, c.freeGB >= 15) : '') + '">' + (c ? num(c.freeGB, 0) + ' GB' : '-') + '</td>' +
         '<td>' + num(((r.outlook || {}).totalMB || 0) / 1024) + ' GB</td>' +
+        (function (vb) {
+          if (!vb || !vb.installed) return '<td class="muted">-</td>';
+          var data = (vb.dataMB || 0) / 1024;
+          return '<td class="' + cls(data < 1, data < 3) + '">' + num(data) + ' GB data<div class="muted">' + (vb.running ? esc(vb.ramMB) + ' MB RAM' : 'not running') + '</div></td>';
+        })(r.viber) +
         '<td class="' + ((cr.blueScreens30d || 0) ? 'bad' : 'ok') + '">' + esc(cr.blueScreens30d || 0) + '</td>' +
         '<td class="' + (appCr ? 'warn' : 'ok') + '">' + appCr + '</td></tr>';
     }).join('');
@@ -250,6 +255,18 @@
         ['Page file', esc(m.pagefileMB) + ' MB']
       ]) +
       '<h3>Top memory apps</h3>' + list((r.topApps || []).map(function (x) { return esc(x.name) + (x.count > 1 ? ' x' + esc(x.count) : '') + ' - ' + esc(x.mb) + ' MB'; })) +
+      (function (vb) {
+        if (!vb) return '';
+        return '<h3>Viber</h3>' + kv([
+          ['Version', esc(vb.version || '-') + (vb.running ? ' <span class="ok">running</span> ' + esc(vb.ramMB) + ' MB RAM, open ' + esc(vb.runningHours) + ' h' : ' <span class="muted">not running</span>')],
+          ['Viber data (AppData)', num((vb.dataMB || 0) / 1024, 2) + ' GB in ' + esc(vb.dataFiles || 0) + ' files'],
+          ['Database files', num((vb.databaseMB || 0) / 1024, 2) + ' GB'],
+          ['ViberDownloads (Documents)', num((vb.downloadsMB || 0) / 1024, 2) + ' GB in ' + esc(vb.downloadsFiles || 0) + ' files'],
+          ['Toolkit cache backups', esc(vb.toolkitCacheBackupMB || 0) + ' MB'],
+          ['Biggest folders', list((vb.folders || []).map(function (f) { return esc(f.folder) + ' - ' + esc(f.mb) + ' MB, ' + esc(f.files) + ' files'; }))],
+          ['Biggest files', list((vb.largestFiles || []).map(function (f) { return esc(f.file) + ' - ' + esc(f.mb) + ' MB <span class="muted">' + esc(f.modified) + '</span>'; }))]
+        ]);
+      })(r.viber) +
       '<h3>Outlook</h3>' + kv([['Version', esc(ol.version)], ['Mail files', list((ol.mailFiles || []).map(function (x) { return esc(x.name) + ' - ' + esc(x.mb) + ' MB'; }))]]) +
       '<h3>Blue screens and sudden restarts (30 days)</h3>' + list((cr.lastBlueScreens || []).map(function (x) { return bdTime(x.time) + ' - Event ' + esc(x.id) + ' ' + esc(x.msg); })) +
       '<h3>App crashes (7 days)</h3>' + list((cr.appCrashes7d || []).map(function (x) { return esc(x.app) + ' - ' + esc(x.count) + 'x'; })) +
