@@ -1334,7 +1334,10 @@ function Start-ViberAgain([string]$ViberExe) {
         return
     }
     try {
-        Start-UserProgram -Path $ViberExe
+        # v13: use the toolkit launcher when present, so Viber opens maximized and at above-normal priority.
+        $launcher = Join-Path $env:ProgramData 'Office-PC-Care-Toolkit\viber-start.vbs'
+        if (Test-Path -LiteralPath $launcher) { [void](Start-UserProgram -Path (Join-Path $env:WINDIR 'System32\wscript.exe') -Arguments ('//B //NoLogo "' + $launcher + '"')) }
+        else { Start-UserProgram -Path $ViberExe }
         Start-Sleep -Seconds 10
         if (@(Get-CurrentSessionProcesses -ProcessName 'Viber').Count -gt 0) {
             Bring-ViberWindowForward

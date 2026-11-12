@@ -152,7 +152,7 @@
       return [p.pc, l.label, l.team, l.note, r.user, r.userFullName, (r.ipv4 || []).join(' '), r.timeZone].join(' ').toLowerCase().indexOf(q) >= 0;
     });
     shown.sort(function (a, b) { return String((a.label || {}).label || '~' + a.pc).localeCompare(String((b.label || {}).label || '~' + b.pc)); });
-    var head = '<tr><th>Person / desk</th><th>Team</th><th>PC</th><th>Windows user</th><th>Build</th><th>Last report</th><th>Running for</th><th>RAM free</th><th>C: free</th><th>Outlook mail</th><th>Viber</th><th>Blue screen / power-off 30d</th><th>App crashes 7d</th></tr>';
+    var head = '<tr><th>Person / desk</th><th>Team</th><th>PC</th><th>Windows user</th><th>Build</th><th>Last report</th><th>Running for</th><th>CPU / disk busy</th><th>RAM free</th><th>C: free</th><th>Outlook mail</th><th>Viber</th><th>Blue screen / power-off 30d</th><th>App crashes 7d</th></tr>';
     $('pcTable').innerHTML = head + shown.map(function (p) {
       var r = p.latest, m = r.memory || {}, c = cDrive(r), cr = r.crashes || {}, l = p.label || {};
       var appCr = (cr.appCrashes7d || []).reduce(function (a, x) { return a + (x.count || 0); }, 0);
@@ -165,6 +165,11 @@
         '<td>' + esc((r.user || '').split('\\').pop()) + '<div class="muted">' + esc(r.userFullName || '') + '</div></td>' +
         '<td class="' + buildCls + '">' + esc(r.build) + '</td><td>' + esc(ago(r.time)) + '<div class="muted">' + bdTime(r.time) + '</div></td>' +
         '<td>' + num((r.windows || {}).uptimeHours, 0) + ' h</td>' +
+        (function (ld) {
+          if (!ld || ld.cpuPercent == null) return '<td class="muted">-</td>';
+          var busy = Math.max.apply(null, (ld.disks || []).map(function (d) { return d.busyPercent || 0; }).concat([0]));
+          return '<td><span class="' + cls(ld.cpuPercent < 60, ld.cpuPercent < 85) + '">' + num(ld.cpuPercent, 0) + '% CPU</span><div class="' + cls(busy < 50, busy < 80) + '">' + num(busy, 0) + '% disk</div></td>';
+        })(r.load) +
         '<td class="' + cls(m.freeGB >= 2, m.freeGB >= 1) + '">' + num(m.freeGB) + ' / ' + num(m.totalGB, 0) + ' GB</td>' +
         '<td class="' + (c ? cls(c.freeGB >= 25, c.freeGB >= 15) : '') + '">' + (c ? num(c.freeGB, 0) + ' GB' : '-') + '</td>' +
         '<td>' + num(((r.outlook || {}).totalMB || 0) / 1024) + ' GB</td>' +
@@ -260,6 +265,14 @@
         ['Commit', num(m.commitUsedGB) + ' of ' + num(m.commitTotalGB) + ' GB'],
         ['Page file', esc(m.pagefileMB) + ' MB']
       ]) +
+      (function (ld) {
+        if (!ld || ld.cpuPercent == null) return '';
+        return '<h3>CPU and disk (5-second sample at report time)</h3>' + kv([
+          ['CPU in use', num(ld.cpuPercent, 0) + '%'],
+          ['Top CPU apps', list((ld.topCpu || []).map(function (x) { return esc(x.name) + ' - ' + num(x.percent, 1) + '%'; }))],
+          ['Disks', list((ld.disks || []).map(function (d) { return esc(d.disk) + ' - ' + num(d.busyPercent, 0) + '% busy, queue ' + esc(d.queue); }))]
+        ]);
+      })(r.load) +
       '<h3>Top memory apps</h3>' + list((r.topApps || []).map(function (x) { return esc(x.name) + (x.count > 1 ? ' x' + esc(x.count) : '') + ' - ' + esc(x.mb) + ' MB'; })) +
       (function (vb) {
         if (!vb) return '';
