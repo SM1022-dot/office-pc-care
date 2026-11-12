@@ -1,11 +1,11 @@
 {
-    "build":  19,
-    "published":  "2026-11-12T15:21:14Z",
-    "notes":  "Report disk health details and VM file location; text report adds CPU/disk sample; dashboard flags disk warnings",
+    "build":  20,
+    "published":  "2026-11-12T16:02:43Z",
+    "notes":  "Fix CPU sample (real elapsed time, no Idle, max 100%); report each Outlook account\u0027s offline months",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "09e225c94d2be6eeffbb1c2a5a2774590b8b320cbef8a6d332a852658441a639"
+                      "sha256":  "aeec896c6a1d8ae401d0e57d0439dc24555d5a450ad2fa91f7670e481876ae87"
                   },
                   {
                       "name":  "config.json",

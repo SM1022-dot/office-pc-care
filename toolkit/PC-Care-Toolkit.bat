@@ -3064,7 +3064,20 @@ function Get-PcReportData {
         }
     }
     $olExe = Find-OutlookExe
-    $r.outlook = [ordered]@{ version = $(if ($olExe) { [string](Get-Item -LiteralPath $olExe).VersionInfo.ProductVersion } else { '' }); mailFiles = $mail; totalMB = [int](($mail | ForEach-Object { $_.mb } | Measure-Object -Sum).Sum) }
+    $acctList = @()
+    if ($profile.SID) {
+        $proot = 'Registry::HKEY_USERS\' + $profile.SID + '\Software\Microsoft\Office\16.0\Outlook\Profiles'
+        foreach ($pk in @(Get-ChildItem -LiteralPath $proot -ErrorAction SilentlyContinue)) {
+            foreach ($ak in @(Get-ChildItem -LiteralPath ($pk.PSPath + '\9375CFF0413111d3B88A00104B2A6676') -ErrorAction SilentlyContinue)) {
+                if (-not (Get-RegValueRaw $ak.PSPath 'IMAP Server').Exists) { continue }
+                $em = (Get-RegValueRaw $ak.PSPath 'Email').Value
+                if ($em -is [byte[]]) { $em = [Text.Encoding]::Unicode.GetString($em).Trim([char]0) }
+                $mo = Get-RegValueRaw $ak.PSPath 'IMAP months to sync'
+                $acctList += [ordered]@{ account = [string]$em; offlineMonths = $(if ($mo.Exists) { [int]$mo.Value } else { 'All' }) }
+            }
+        }
+    }
+    $r.outlook = [ordered]@{ accounts = $acctList; version = $(if ($olExe) { [string](Get-Item -LiteralPath $olExe).VersionInfo.ProductVersion } else { '' }); mailFiles = $mail; totalMB = [int](($mail | ForEach-Object { $_.mb } | Measure-Object -Sum).Sum) }
     try { $r.vpn = @(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.InterfaceDescription -match '(?i)vpn|tap-|wintun|wireguard|nord|express|lightway' } | ForEach-Object { [ordered]@{ name = [string]$_.Name; status = [string]$_.Status } }) } catch { $r.vpn = @() }
     $vmx = @(Get-Process -Name 'vmware-vmx' -ErrorAction SilentlyContinue)
     $r.vm = [ordered]@{ running = ($vmx.Count -gt 0); memMB = [int](($vmx | Measure-Object WorkingSet64 -Sum).Sum / 1MB) }
@@ -3117,19 +3130,23 @@ function Get-LoadSample {
     $out = [ordered]@{ seconds = 5 }
     try {
         $cores = [Environment]::ProcessorCount
-        $a = @{}; foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) { try { $a[$p.Id] = @{ n = $p.ProcessName; t = $p.TotalProcessorTime.TotalMilliseconds } } catch {} }
+        $a = @{}; foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) { if ($p.Id -eq 0) { continue }; try { $a[$p.Id] = @{ n = $p.ProcessName; t = $p.TotalProcessorTime.TotalMilliseconds } } catch {} }
+        $clock = [Diagnostics.Stopwatch]::StartNew()
         $diskBefore = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_Total' })
         Start-Sleep -Seconds 5
         $use = @{}
-        foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
-            if (-not $a.ContainsKey($p.Id) -or $p.Id -eq $PID) { continue }
+        $procs = @(Get-Process -ErrorAction SilentlyContinue)
+        $elapsed = [math]::Max(1000, $clock.Elapsed.TotalMilliseconds)
+        $out.seconds = [math]::Round($elapsed / 1000, 1)
+        foreach ($p in $procs) {
+            if ($p.Id -eq 0 -or -not $a.ContainsKey($p.Id) -or $p.Id -eq $PID) { continue }
             try { $d = $p.TotalProcessorTime.TotalMilliseconds - $a[$p.Id].t } catch { continue }
             if ($d -le 0) { continue }
             $use[$p.ProcessName] = [double]$use[$p.ProcessName] + $d
         }
         $total = 0; foreach ($v in $use.Values) { $total += $v }
-        $out.cpuPercent = [math]::Round(100 * $total / (5000 * $cores), 1)
-        $out.topCpu = @($use.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 8 | ForEach-Object { [ordered]@{ name = $_.Key; percent = [math]::Round(100 * $_.Value / (5000 * $cores), 1) } })
+        $out.cpuPercent = [math]::Round([math]::Min(100, 100 * $total / ($elapsed * $cores)), 1)
+        $out.topCpu = @($use.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 8 | ForEach-Object { [ordered]@{ name = $_.Key; percent = [math]::Round([math]::Min(100, 100 * $_.Value / ($elapsed * $cores)), 1) } })
         $diskAfter = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_Total' })
         $out.disks = @(foreach ($d1 in $diskAfter) {
             $d0 = $diskBefore | Where-Object { $_.Name -eq $d1.Name } | Select-Object -First 1
@@ -3271,7 +3288,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '19'
+$script:BuildStamp     = '20'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
