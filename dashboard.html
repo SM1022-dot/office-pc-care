@@ -179,7 +179,8 @@
         (function (vb) {
           if (!vb || !vb.installed) return '<td class="muted">-</td>';
           var data = (vb.dataMB || 0) / 1024;
-          return '<td class="' + cls(data < 1, data < 3) + '">' + num(data) + ' GB data<div class="muted">' + (vb.running ? esc(vb.ramMB) + ' MB RAM' : 'not running') + '</div></td>';
+          return '<td class="' + cls(data < 1, data < 3) + '">' + num(data) + ' GB data<div class="muted">' + (vb.running ? esc(vb.ramMB) + ' MB RAM' : 'not running') + '</div>' +
+            (r.viberHangs && (r.viberHangs.enabled || r.viberHangs.total) ? '<div class="' + (r.viberHangs.last24h ? 'bad' : 'ok') + '">' + esc(r.viberHangs.last24h || 0) + ' freezes 24h</div>' : '') + '</td>';
         })(r.viber) +
         (function (b) { return '<td><span class="' + (b.real ? 'bad' : 'ok') + '">' + b.real + ' blue screen</span><div class="' + (b.power ? 'warn' : 'muted') + '">' + b.power + ' power-off</div></td>'; })(bsCounts(cr)) +
         '<td class="' + (appCr ? 'warn' : 'ok') + '">' + appCr + '</td></tr>';
@@ -296,6 +297,21 @@
           ['Biggest files', list((vb.largestFiles || []).map(function (f) { return esc(f.file) + ' - ' + esc(f.mb) + ' MB <span class="muted">' + esc(f.modified) + '</span>'; }))]
         ]);
       })(r.viber) +
+      (function (vh) {
+        if (!vh || !(vh.enabled || vh.total)) return '';
+        var st = vh.status || {};
+        return '<h3>Viber freezes (watcher)</h3>' + kv([
+          ['Watching', (vh.enabled ? '<span class="ok">on</span>' : '<span class="muted">off</span>') + ' until ' + esc(vh.until) + (st.lastAlive ? ' <span class="muted">alive ' + bdTime(st.lastAlive) + ', ' + esc(st.checks) + ' checks, watcher ' + esc(st.watcherMB) + ' MB RAM</span>' : '')],
+          ['Last 24 h', esc(vh.last24h || 0) + ' freezes, ' + esc(vh.notResponding24h || 0) + ' Not Responding, longest ' + num(vh.longestSec24h || 0) + ' s'],
+          ['Recent', list((vh.recent || []).slice().reverse().map(function (h) {
+            return esc(h.bdTime) + ' - frozen at least <b>' + num(h.seconds) + ' s</b>' + (h.notResponding ? ' <span class="bad">Not Responding</span>' : '') +
+              ' | RAM free ' + esc(h.ramFreeMB) + ' MB, commit ' + esc(h.commitUsedMB) + '/' + esc(h.commitLimitMB) + ' MB | CPU ' + esc(h.cpuPercent) + '%: ' +
+              (h.topCpu || []).slice(0, 3).map(function (x) { return esc(x.name) + ' ' + esc(x.percent) + '%'; }).join(', ') +
+              ' | disk ' + (h.disks || []).map(function (d) { return esc(d.busyPercent) + '% q' + esc(d.queue); }).join(' / ') +
+              ' | Viber read ' + esc(h.viberReadMBs) + ' / write ' + esc(h.viberWriteMBs) + ' MB/s, ' + esc(h.viberMB) + ' MB';
+          }))]
+        ]);
+      })(r.viberHangs) +
       '<h3>Outlook</h3>' + kv([['Version', esc(ol.version)], ['Offline months per account', list((ol.accounts || []).map(function (x) { return esc(x.account) + ' - <span class="' + (x.offlineMonths === 'All' ? 'warn' : 'ok') + '">' + esc(x.offlineMonths) + (x.offlineMonths === 'All' ? '' : ' months') + '</span>'; }))], ['Mail files', list((ol.mailFiles || []).map(function (x) { return esc(x.name) + ' - ' + esc(x.mb) + ' MB'; }))]]) +
       '<h3>Blue screens and sudden restarts (30 days)</h3>' + list((cr.lastBlueScreens || []).map(function (x) { return bdTime(x.time) + ' - Event ' + esc(x.id) + ' ' + esc(x.msg); })) +
       '<h3>App crashes (7 days)</h3>' + list((cr.appCrashes7d || []).map(function (x) { return esc(x.app) + ' - ' + esc(x.count) + 'x'; })) +
