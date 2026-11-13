@@ -1,15 +1,15 @@
 {
-    "build":  21,
-    "published":  "2026-11-13T09:43:16Z",
-    "notes":  "Viber freeze watcher on PC-36 (measuring only): logs freeze length with RAM, CPU and disk at that moment; report and das",
+    "build":  22,
+    "published":  "2026-11-13T09:47:40Z",
+    "notes":  "Viber watcher runs only until 18:45 BD today, then stops itself and its task is removed",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "49de528e23414da77cd6e004f71d0217f27a9b8b81a879f7b486d86b20cb36ee"
+                      "sha256":  "c3159ef3499c910d807e651aa09a5fe369adff49ff610fea7b92a15a44245b71"
                   },
                   {
                       "name":  "config.json",
-                      "sha256":  "8f75b43d41a7f1416a26af4762ca43fdb732cd80fafaf4f16d615f94dfbe0bee"
+                      "sha256":  "32eb1f50f572b8b45eff8dd35e3fee2cdd862f2a153b61850bf4107fb7b6ee0a"
                   }
               ]
 }

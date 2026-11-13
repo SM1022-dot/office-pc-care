@@ -103,5 +103,10 @@
         "build":  21,
         "published":  "2026-11-13T09:43:16Z",
         "notes":  "Viber freeze watcher on PC-36 (measuring only): logs freeze length with RAM, CPU and disk at that moment; report and das"
+    },
+    {
+        "build":  22,
+        "published":  "2026-11-13T09:47:40Z",
+        "notes":  "Viber watcher runs only until 18:45 BD today, then stops itself and its task is removed"
     }
 ]
