@@ -22,6 +22,8 @@
   h2 { font-size:18px; margin:0 0 12px; }
   .ok { color:var(--ok); font-weight:600; }
   .warn { color:var(--warn); font-weight:600; }
+  .video { position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:#000; }
+  .video iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
   kbd { border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:1px 6px; font-size:14px; background:var(--bg); }
 </style>
 </head>
@@ -33,6 +35,11 @@
   <div class="card">
     <a class="btn" href="/toolkit/PC-Care-Toolkit.bat" download="PC-Care-Toolkit.bat">Download PC Care Toolkit</a>
     <div class="meta" id="build">Latest version</div>
+  </div>
+
+  <div class="card">
+    <h2>How to use (video, 2 min)</h2>
+    <div class="video"><iframe src="https://www.youtube-nocookie.com/embed/Jbq1I_RyZ-c" title="PC Care Toolkit - how to use" loading="lazy" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>
   </div>
 
   <div class="card">
