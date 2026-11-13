@@ -2930,6 +2930,18 @@ function New-ITReport([string]$OutDir = '') {
     foreach ($x in @($ls.topCpu)) { $L.Add(('{0,-30} {1,5}% CPU' -f $x.name, $x.percent)) }
     foreach ($x in @($ls.disks)) { $L.Add(('Disk {0,-24} {1,5}% busy, queue {2}' -f $x.disk, $x.busyPercent, $x.queue)) }
     $L.Add('')
+    $vh = Get-ViberHangStats $profile
+    if ($vh.enabled -or $vh.total) {
+        $L.Add('== VIBER FREEZES (watcher, measuring only; seconds = at least) ==')
+        $L.Add(('Watching    : {0} (until {1} BD)   Freezes last 24 h: {2} (Not Responding: {3}, longest {4} s)' -f $vh.enabled, $vh.until, $vh.last24h, $vh.notResponding24h, $vh.longestSec24h))
+        if ($vh.status) { $L.Add(('Watcher     : started {0}, alive {1}, {2} checks, uses {3} MB RAM' -f $vh.status.started, $vh.status.lastAlive, $vh.status.checks, $vh.status.watcherMB)) }
+        foreach ($h in @($vh.recent)) {
+            $top = (@($h.topCpu) | Select-Object -First 3 | ForEach-Object { $_.name + ' ' + $_.percent + '%' }) -join ', '
+            $dk = (@($h.disks) | ForEach-Object { [string]$_.busyPercent + '% q' + $_.queue }) -join ' / '
+            $L.Add(('{0}  {1,5} s{2}  RAM free {3} MB  CPU {4}% ({5})  disk {6}  Viber read {7} / write {8} MB/s' -f $h.bdTime, $h.seconds, $(if ($h.notResponding) { ' NR' } else { '   ' }), $h.ramFreeMB, $h.cpuPercent, $top, $dk, $h.viberReadMBs, $h.viberWriteMBs))
+        }
+        $L.Add('')
+    }
     $L.Add('== TOP 15 APPS BY MEMORY ==')
     Get-Process -ErrorAction SilentlyContinue | Sort-Object WorkingSet64 -Descending | Select-Object -First 15 | ForEach-Object { $L.Add(('{0,-30} {1,7:N0} MB' -f $_.ProcessName, ($_.WorkingSet64 / 1MB))) }
     $L.Add('')
@@ -3092,6 +3104,7 @@ function Get-PcReportData {
     }
     $r.chromeExtensions = @(Get-InstalledChromeExtensions)
     $r.viber = Get-ViberStats $profile
+    $r.viberHangs = Get-ViberHangStats $profile
     $r.load = Get-LoadSample
     $r.vmFiles = @(Get-VmxFiles | ForEach-Object {
         $vmDir = Split-Path -Parent $_
@@ -3288,7 +3301,7 @@ function Invoke-UndoAll {
 # Outlook 6 months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '20'
+$script:BuildStamp     = '21'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3316,6 +3329,8 @@ $script:DefaultConfig = [ordered]@{
     outlookDisableAllAddins   = $true
     defenderQuickScanBdTime   = '20:45'
     defenderCpuLimitPercent   = 20
+    viberWatchPcs             = @('PC-36')
+    viberWatchUntilBd         = '2026-11-16'
 }
 function Get-Cfg([string]$Name) {
     $value = $script:DefaultConfig[$Name]
@@ -3958,8 +3973,195 @@ function Set-FirefoxMemoryLimits {
     }
 }
 
+# ---------------------------------------------------------------------
+# Viber freeze watcher (measuring only). A hidden, idle-priority script in the user's session asks
+# Viber's window "are you there?" every second (WM_NULL, the same check Windows uses for
+# "Not Responding"). When Viber does not answer within 1 second, it notes RAM, CPU per app and disk
+# busy at that moment, and how long the freeze lasted. It never closes, restarts or changes Viber.
+# Freeze length is a minimum (checked every second). Runs only on PCs listed in config 'viberWatchPcs' ('*' = all) until BD date 'viberWatchUntilBd'.
+# ---------------------------------------------------------------------
+$script:ViberWatchTask     = 'Office PC Care Toolkit - Viber Watch'
+$script:ViberWatchScript   = Join-Path $script:ToolRoot 'viber-watch.ps1'
+$script:ViberWatchLauncher = Join-Path $script:ToolRoot 'viber-watch.vbs'
+$script:ViberWatchSentFile = Join-Path $script:ToolRoot 'viber-watch-sent.txt'
+function Test-ViberWatchEnabled {
+    $pcs = @(Get-Cfg 'viberWatchPcs' | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() })
+    $until = [string](Get-Cfg 'viberWatchUntilBd')
+    if (-not $until -or (Get-BdDate) -gt $until) { return $false }
+    return (($pcs -contains '*') -or ($pcs -contains $env:COMPUTERNAME.ToUpperInvariant()))
+}
+function Get-ViberWatchDir($Profile) {
+    if (-not $Profile -or -not $Profile.LocalPath) { return $null }
+    return (Join-Path $Profile.LocalPath 'AppData\Local\Office-PC-Care-Toolkit')
+}
+function Update-ViberWatch {
+    $svc = $null; try { $svc = Get-TaskService } catch { return }
+    if (-not (Test-ViberWatchEnabled)) {
+        try { $svc.GetFolder('\').DeleteTask($script:ViberWatchTask, 0) } catch {}
+        Remove-Item -LiteralPath $script:ViberWatchScript, $script:ViberWatchLauncher -Force -ErrorAction SilentlyContinue
+        return
+    }
+    $runner = @'
+$ErrorActionPreference = 'SilentlyContinue'
+$until = '__UNTIL__'
+try { (Get-Process -Id $PID).PriorityClass = 'Idle' } catch {}
+$created = $false
+$mutex = New-Object System.Threading.Mutex($true, 'Local\OfficePcCareViberWatch', [ref]$created)
+if (-not $created) { exit }
+Add-Type -TypeDefinition @"
+using System; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading;
+public static class PcCareViberWatch {
+    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, IntPtr l, uint f, uint t, out IntPtr r);
+    static Stopwatch clock = new Stopwatch(); static volatile bool done = true; static long replyMs;
+    // Sends WM_NULL on a helper thread and notes the exact moment the window answers, so the
+    // freeze length stays exact while the main script is busy measuring the PC.
+    public static void Probe(IntPtr h) {
+        done = false; replyMs = -1; clock.Restart();
+        Thread t = new Thread(delegate () { IntPtr r; SendMessageTimeout(h, 0, IntPtr.Zero, IntPtr.Zero, 0, 600000, out r); replyMs = clock.ElapsedMilliseconds; done = true; });
+        t.IsBackground = true; t.Start();
+    }
+    public static bool Done { get { return done; } }
+    public static double ElapsedSeconds { get { return clock.Elapsed.TotalSeconds; } }
+    public static double ReplySeconds { get { return replyMs / 1000.0; } }
+    [StructLayout(LayoutKind.Sequential)] public class Mem { public uint len = 64; public uint load; public ulong totalPhys, availPhys, totalPage, availPage, totalVirt, availVirt, availExt; }
+    [DllImport("kernel32.dll")] public static extern bool GlobalMemoryStatusEx([In, Out] Mem m);
+    [StructLayout(LayoutKind.Sequential)] public struct Io { public ulong rOps, wOps, oOps, rBytes, wBytes, oBytes; }
+    [DllImport("kernel32.dll")] public static extern bool GetProcessIoCounters(IntPtr h, out Io c);
+}
+"@
+$dir = Join-Path $env:LOCALAPPDATA 'Office-PC-Care-Toolkit'
+New-Item -ItemType Directory -Path $dir -Force | Out-Null
+$log = Join-Path $dir 'viber-hangs.jsonl'
+$statusFile = Join-Path $dir 'viber-watch-status.json'
+$started = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+$checks = 0; $lastStatus = [DateTime]::MinValue
+$cores = [Environment]::ProcessorCount
+function Get-Snapshot($v) {
+    $s = [ordered]@{}
+    $m = New-Object PcCareViberWatch+Mem; [void][PcCareViberWatch]::GlobalMemoryStatusEx($m)
+    $s.ramFreeMB = [int]($m.availPhys / 1MB); $s.ramLoad = [int]$m.load
+    $s.commitUsedMB = [int](($m.totalPage - $m.availPage) / 1MB); $s.commitLimitMB = [int]($m.totalPage / 1MB)
+    $a = @{}; foreach ($p in @(Get-Process)) { if ($p.Id -and $p.Id -ne $PID) { try { $a[$p.Id] = $p.TotalProcessorTime.TotalMilliseconds } catch {} } }
+    $io0 = New-Object PcCareViberWatch+Io; $io1 = New-Object PcCareViberWatch+Io
+    try { [void][PcCareViberWatch]::GetProcessIoCounters($v.Handle, [ref]$io0) } catch {}
+    $d0 = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk | Where-Object { $_.Name -ne '_Total' })
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    Start-Sleep -Milliseconds 1000
+    $ms = [math]::Max(500, $clock.Elapsed.TotalMilliseconds)
+    $use = @{}
+    foreach ($p in @(Get-Process)) {
+        if (-not $a.ContainsKey($p.Id)) { continue }
+        try { $d = $p.TotalProcessorTime.TotalMilliseconds - $a[$p.Id] } catch { continue }
+        if ($d -gt 0) { $use[$p.ProcessName] = [double]$use[$p.ProcessName] + $d }
+    }
+    $s.topCpu = @($use.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 6 | ForEach-Object { [ordered]@{ name = $_.Key; percent = [math]::Round([math]::Min(100, 100 * $_.Value / ($ms * $cores)), 1) } })
+    $s.cpuPercent = [math]::Round([math]::Min(100, 100 * (($use.Values | Measure-Object -Sum).Sum) / ($ms * $cores)), 1)
+    try { [void][PcCareViberWatch]::GetProcessIoCounters($v.Handle, [ref]$io1) } catch {}
+    $sec = $ms / 1000
+    $s.viberReadMBs = [math]::Round(($io1.rBytes - $io0.rBytes) / 1MB / $sec, 1)
+    $s.viberWriteMBs = [math]::Round(($io1.wBytes - $io0.wBytes) / 1MB / $sec, 1)
+    try { $v.Refresh(); $s.viberMB = [int]($v.WorkingSet64 / 1MB); $s.viberPrivateMB = [int]($v.PrivateMemorySize64 / 1MB); $s.viberThreads = $v.Threads.Count } catch {}
+    $d1 = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk | Where-Object { $_.Name -ne '_Total' })
+    $s.disks = @(foreach ($x in $d1) {
+        $y = $d0 | Where-Object { $_.Name -eq $x.Name } | Select-Object -First 1
+        if (-not $y) { continue }
+        $dt = [double]($x.Timestamp_Sys100NS - $y.Timestamp_Sys100NS); if ($dt -le 0) { continue }
+        $idle = 100 * ([double]($x.PercentIdleTime - $y.PercentIdleTime)) / $dt
+        [ordered]@{ disk = [string]$x.Name; busyPercent = [math]::Round([math]::Max(0, [math]::Min(100, 100 - $idle)), 1); queue = [int]$x.CurrentDiskQueueLength }
+    })
+    return $s
+}
+while ($true) {
+    if ([DateTime]::UtcNow.AddHours(6).ToString('yyyy-MM-dd') -gt $until) { break }
+    if (([DateTime]::UtcNow - $lastStatus).TotalMinutes -ge 10) {
+        $me = Get-Process -Id $PID
+        ([ordered]@{ started = $started; lastAlive = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); checks = $checks; watcherMB = [int]($me.WorkingSet64 / 1MB); watcherPrivateMB = [int]($me.PrivateMemorySize64 / 1MB) } | ConvertTo-Json -Compress) | Set-Content -LiteralPath $statusFile -Encoding UTF8
+        $lastStatus = [DateTime]::UtcNow
+    }
+    $v = Get-Process -Name 'Viber' | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+    if (-not $v) { Start-Sleep -Seconds 5; continue }
+    if (-not [PcCareViberWatch]::Done) { Start-Sleep -Seconds 1; continue }
+    $h = $v.MainWindowHandle
+    $checks++
+    $startUtc = [DateTime]::UtcNow
+    [PcCareViberWatch]::Probe($h)
+    while (-not [PcCareViberWatch]::Done -and [PcCareViberWatch]::ElapsedSeconds -lt 1) { Start-Sleep -Milliseconds 100 }
+    if ([PcCareViberWatch]::Done) { Start-Sleep -Seconds 1; continue }
+    # Viber did not answer for 1 second: it is frozen right now. Measure the PC while it is.
+    $snap = Get-Snapshot $v
+    while (-not [PcCareViberWatch]::Done -and -not $v.HasExited -and [PcCareViberWatch]::ElapsedSeconds -lt 600) { Start-Sleep -Milliseconds 250 }
+    $secs = $(if ([PcCareViberWatch]::Done) { [PcCareViberWatch]::ReplySeconds } else { [PcCareViberWatch]::ElapsedSeconds })
+    $rec = [ordered]@{ time = $startUtc.ToString('yyyy-MM-ddTHH:mm:ssZ'); bdTime = $startUtc.AddHours(6).ToString('yyyy-MM-dd HH:mm:ss'); seconds = [math]::Round($secs, 1); notResponding = ($secs -ge 5); closed = [bool]$v.HasExited }
+    foreach ($k in $snap.Keys) { $rec[$k] = $snap[$k] }
+    Add-Content -LiteralPath $log -Value ($rec | ConvertTo-Json -Depth 4 -Compress) -Encoding UTF8
+    if ((Get-Item -LiteralPath $log).Length -gt 600KB) { $keep = @(Get-Content -LiteralPath $log -Encoding UTF8 | Select-Object -Last 300); Set-Content -LiteralPath $log -Value $keep -Encoding UTF8 }
+    Start-Sleep -Seconds 2
+}
+'@
+    New-Item -ItemType Directory -Path $script:ToolRoot -Force | Out-Null
+    Set-Content -LiteralPath $script:ViberWatchScript -Value ($runner.Replace('__UNTIL__', [string](Get-Cfg 'viberWatchUntilBd'))) -Encoding UTF8
+    $vbs = 'CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""' + $script:ViberWatchScript + '""", 0, False'
+    Set-Content -LiteralPath $script:ViberWatchLauncher -Value $vbs -Encoding ASCII
+    try {
+        $def = $svc.NewTask(0)
+        $def.RegistrationInfo.Description = 'Office PC Care Toolkit: measures Viber freezes for IT (measuring only, never touches Viber).'
+        $def.Settings.Enabled = $true
+        $def.Settings.Hidden = $true
+        $def.Settings.DisallowStartIfOnBatteries = $false
+        $def.Settings.StopIfGoingOnBatteries = $false
+        $def.Settings.ExecutionTimeLimit = 'PT0S'
+        $def.Settings.Priority = 7
+        $def.Settings.MultipleInstances = 2
+        $def.Principal.GroupId = 'S-1-5-32-545'
+        $def.Principal.RunLevel = 0
+        $t = $def.Triggers.Create(9); $t.Delay = 'PT1M'
+        # Every 30 minutes: start it again if it stopped (the script itself allows only one copy).
+        $t2 = $def.Triggers.Create(1)
+        $t2.StartBoundary = (Get-Date).AddMinutes(1).ToString('yyyy-MM-ddTHH:mm:ss')
+        $t2.Repetition.Interval = 'PT30M'
+        $a = $def.Actions.Create(0)
+        $a.Path = Join-Path $env:WINDIR 'System32\wscript.exe'
+        $a.Arguments = '//B //NoLogo "' + $script:ViberWatchLauncher + '"'
+        $task = $svc.GetFolder('\').RegisterTaskDefinition($script:ViberWatchTask, $def, 6, $null, $null, 4)
+        try { [void]$task.Run($null) } catch {}
+    } catch { Write-Skip ('Viber watch task could not be created: ' + $_.Exception.Message) }
+}
+function Get-ViberHangStats($Profile) {
+    $out = [ordered]@{ enabled = (Test-ViberWatchEnabled); until = [string](Get-Cfg 'viberWatchUntilBd') }
+    $dir = Get-ViberWatchDir $Profile
+    if (-not $dir) { return $out }
+    try { $st = Get-Content -LiteralPath (Join-Path $dir 'viber-watch-status.json') -Raw -Encoding UTF8 | ConvertFrom-Json; $out.status = $st } catch {}
+    $rows = @()
+    try { $rows = @(Get-Content -LiteralPath (Join-Path $dir 'viber-hangs.jsonl') -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} }) } catch {}
+    $since = [DateTime]::UtcNow.AddHours(-24)
+    $day = @($rows | Where-Object { try { [DateTime]::Parse($_.time).ToUniversalTime() -ge $since } catch { $false } })
+    $out.total = $rows.Count
+    $out.last24h = $day.Count
+    $out.notResponding24h = @($day | Where-Object { $_.notResponding }).Count
+    $out.longestSec24h = [double](($day | Measure-Object seconds -Maximum).Maximum)
+    $out.recent = @($rows | Select-Object -Last 15)
+    return $out
+}
+function Send-ReportIfNewViberHangs {
+    # Called by the 15-minute update check (SYSTEM): send a fresh report at most once an hour when
+    # the watcher has noted new freezes, so IT sees them the same day.
+    if (-not (Test-ViberWatchEnabled)) { return }
+    $dir = Get-ViberWatchDir (Get-InteractiveProfile)
+    if (-not $dir) { return }
+    $log = Join-Path $dir 'viber-hangs.jsonl'
+    if (-not (Test-Path -LiteralPath $log)) { return }
+    $stamp = (Get-Item -LiteralPath $log).LastWriteTimeUtc.ToString('o')
+    $last = ''; try { $last = (Get-Content -LiteralPath $script:ViberWatchSentFile -Raw).Trim() } catch {}
+    if ($stamp -eq $last) { return }
+    if ((Test-Path -LiteralPath $script:ViberWatchSentFile) -and ((Get-Item -LiteralPath $script:ViberWatchSentFile).LastWriteTimeUtc -gt [DateTime]::UtcNow.AddMinutes(-60))) { return }
+    Set-BackgroundMode $true
+    Send-PcReport -Force
+    Set-Content -LiteralPath $script:ViberWatchSentFile -Value $stamp -Encoding ASCII
+}
+
 function Invoke-UpdateCheck {
     Set-ViberPriority
+    try { Send-ReportIfNewViberHangs } catch {}
     $updated = Invoke-SelfUpdate
     if ($updated -eq $true -and (Test-Path -LiteralPath $script:InstalledBat)) {
         $env:PCTOOLKIT_CHAINED = '1'
@@ -4008,6 +4210,7 @@ function Invoke-ApplyAll {
     Add-ViberDefenderExclusion
     Set-ViberPriority
     Set-FirefoxMemoryLimits
+    Update-ViberWatch
 }
 function Invoke-OneTimeSetup {
     Write-Header 'PC SETUP'

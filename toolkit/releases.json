@@ -98,5 +98,10 @@
         "build":  20,
         "published":  "2026-11-12T16:02:43Z",
         "notes":  "Fix CPU sample (real elapsed time, no Idle, max 100%); report each Outlook account\u0027s offline months"
+    },
+    {
+        "build":  21,
+        "published":  "2026-11-13T09:43:16Z",
+        "notes":  "Viber freeze watcher on PC-36 (measuring only): logs freeze length with RAM, CPU and disk at that moment; report and das"
     }
 ]
