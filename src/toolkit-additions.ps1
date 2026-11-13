@@ -1358,7 +1358,7 @@ $script:DefaultConfig = [ordered]@{
     defenderQuickScanBdTime   = '20:45'
     defenderCpuLimitPercent   = 20
     viberWatchPcs             = @('PC-36')
-    viberWatchUntilBd         = '2026-11-16'
+    viberWatchUntilBd         = '2026-11-13 18:45'
 }
 function Get-Cfg([string]$Name) {
     $value = $script:DefaultConfig[$Name]
@@ -2006,7 +2006,8 @@ function Set-FirefoxMemoryLimits {
 # Viber's window "are you there?" every second (WM_NULL, the same check Windows uses for
 # "Not Responding"). When Viber does not answer within 1 second, it notes RAM, CPU per app and disk
 # busy at that moment, and how long the freeze lasted. It never closes, restarts or changes Viber.
-# Freeze length is a minimum (checked every second). Runs only on PCs listed in config 'viberWatchPcs' ('*' = all) until BD date 'viberWatchUntilBd'.
+# Freeze length is a minimum (checked every second). Runs only on PCs listed in config 'viberWatchPcs' ('*' = all) until BD time 'viberWatchUntilBd'
+# ('yyyy-MM-dd HH:mm', or just a date = to the end of that day).
 # ---------------------------------------------------------------------
 $script:ViberWatchTask     = 'Office PC Care Toolkit - Viber Watch'
 $script:ViberWatchScript   = Join-Path $script:ToolRoot 'viber-watch.ps1'
@@ -2014,9 +2015,14 @@ $script:ViberWatchLauncher = Join-Path $script:ToolRoot 'viber-watch.vbs'
 $script:ViberWatchSentFile = Join-Path $script:ToolRoot 'viber-watch-sent.txt'
 function Test-ViberWatchEnabled {
     $pcs = @(Get-Cfg 'viberWatchPcs' | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() })
-    $until = [string](Get-Cfg 'viberWatchUntilBd')
-    if (-not $until -or (Get-BdDate) -gt $until) { return $false }
+    $until = Get-ViberWatchUntil
+    if (-not $until -or [DateTime]::UtcNow.AddHours(6).ToString('yyyy-MM-dd HH:mm') -ge $until) { return $false }
     return (($pcs -contains '*') -or ($pcs -contains $env:COMPUTERNAME.ToUpperInvariant()))
+}
+function Get-ViberWatchUntil {
+    $u = ([string](Get-Cfg 'viberWatchUntilBd')).Trim()
+    if ($u.Length -eq 10) { $u += ' 23:59' }
+    return $u
 }
 function Get-ViberWatchDir($Profile) {
     if (-not $Profile -or -not $Profile.LocalPath) { return $null }
@@ -2027,6 +2033,8 @@ function Update-ViberWatch {
     if (-not (Test-ViberWatchEnabled)) {
         try { $svc.GetFolder('\').DeleteTask($script:ViberWatchTask, 0) } catch {}
         Remove-Item -LiteralPath $script:ViberWatchScript, $script:ViberWatchLauncher -Force -ErrorAction SilentlyContinue
+        # Stop a watcher that is still running (it measures only, so stopping it changes nothing for Viber).
+        try { Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction Stop | Where-Object { $_.CommandLine -like '*viber-watch.ps1*' } | ForEach-Object { [void](Invoke-CimMethod -InputObject $_ -MethodName Terminate) } } catch {}
         return
     }
     $runner = @'
@@ -2100,7 +2108,8 @@ function Get-Snapshot($v) {
     return $s
 }
 while ($true) {
-    if ([DateTime]::UtcNow.AddHours(6).ToString('yyyy-MM-dd') -gt $until) { break }
+    if ([DateTime]::UtcNow.AddHours(6).ToString('yyyy-MM-dd HH:mm') -ge $until) { break }
+    if (-not (Test-Path -LiteralPath $PSCommandPath)) { break }
     if (([DateTime]::UtcNow - $lastStatus).TotalMinutes -ge 10) {
         $me = Get-Process -Id $PID
         ([ordered]@{ started = $started; lastAlive = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); checks = $checks; watcherMB = [int]($me.WorkingSet64 / 1MB); watcherPrivateMB = [int]($me.PrivateMemorySize64 / 1MB) } | ConvertTo-Json -Compress) | Set-Content -LiteralPath $statusFile -Encoding UTF8
@@ -2127,7 +2136,7 @@ while ($true) {
 }
 '@
     New-Item -ItemType Directory -Path $script:ToolRoot -Force | Out-Null
-    Set-Content -LiteralPath $script:ViberWatchScript -Value ($runner.Replace('__UNTIL__', [string](Get-Cfg 'viberWatchUntilBd'))) -Encoding UTF8
+    Set-Content -LiteralPath $script:ViberWatchScript -Value ($runner.Replace('__UNTIL__', (Get-ViberWatchUntil))) -Encoding UTF8
     $vbs = 'CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""' + $script:ViberWatchScript + '""", 0, False'
     Set-Content -LiteralPath $script:ViberWatchLauncher -Value $vbs -Encoding ASCII
     try {
@@ -2155,7 +2164,7 @@ while ($true) {
     } catch { Write-Skip ('Viber watch task could not be created: ' + $_.Exception.Message) }
 }
 function Get-ViberHangStats($Profile) {
-    $out = [ordered]@{ enabled = (Test-ViberWatchEnabled); until = [string](Get-Cfg 'viberWatchUntilBd') }
+    $out = [ordered]@{ enabled = (Test-ViberWatchEnabled); until = (Get-ViberWatchUntil) }
     $dir = Get-ViberWatchDir $Profile
     if (-not $dir) { return $out }
     try { $st = Get-Content -LiteralPath (Join-Path $dir 'viber-watch-status.json') -Raw -Encoding UTF8 | ConvertFrom-Json; $out.status = $st } catch {}
@@ -2172,8 +2181,7 @@ function Get-ViberHangStats($Profile) {
 }
 function Send-ReportIfNewViberHangs {
     # Called by the 15-minute update check (SYSTEM): send a fresh report at most once an hour when
-    # the watcher has noted new freezes, so IT sees them the same day.
-    if (-not (Test-ViberWatchEnabled)) { return }
+    # the watcher has noted new freezes, so IT sees them the same day (also the last ones after it ends).
     $dir = Get-ViberWatchDir (Get-InteractiveProfile)
     if (-not $dir) { return }
     $log = Join-Path $dir 'viber-hangs.jsonl'
@@ -2189,6 +2197,7 @@ function Send-ReportIfNewViberHangs {
 
 function Invoke-UpdateCheck {
     Set-ViberPriority
+    try { if (-not (Test-ViberWatchEnabled)) { Update-ViberWatch } } catch {}
     try { Send-ReportIfNewViberHangs } catch {}
     $updated = Invoke-SelfUpdate
     if ($updated -eq $true -and (Test-Path -LiteralPath $script:InstalledBat)) {
