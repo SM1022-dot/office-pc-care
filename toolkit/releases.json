@@ -128,5 +128,10 @@
         "build":  26,
         "published":  "2026-11-14T10:04:02Z",
         "notes":  "Guardian also on SM1022 (PC-36) and HD1022 until 21:00 BD"
+    },
+    {
+        "build":  27,
+        "published":  "2026-11-14T10:11:05Z",
+        "notes":  "After an update, stay light: only apply settings and report at background priority (no cleanup or Defender download whil"
     }
 ]

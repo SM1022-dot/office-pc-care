@@ -3317,7 +3317,7 @@ function Invoke-UndoAll {
 # Outlook offline months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '26'
+$script:BuildStamp     = '27'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -4459,6 +4459,15 @@ function Invoke-AutoCare {
         $env:PCTOOLKIT_CHAINED = '1'
         Write-Note 'Running Auto Care again with the new build.'
         Start-Process -FilePath (Join-Path $env:WINDIR 'System32\cmd.exe') -ArgumentList ('/d /c ""' + $script:InstalledBat + '" auto"') -WindowStyle Hidden -Wait
+        return
+    }
+    if ($env:PCTOOLKIT_CHAINED) {
+        # Started right after an update, while staff are working: stay light. Only apply the settings of
+        # the new build and report, at background priority. The cleanup, the Defender definitions
+        # download and the rest run at the normal Auto Care times, not after every update.
+        Set-BackgroundMode $true
+        if (Test-Path -LiteralPath $script:SetupMarker) { Invoke-ApplyAll }
+        Send-PcReport
         return
     }
     if (-not (Test-Path -LiteralPath $script:SetupMarker)) { Write-Skip 'PC setup has not been run. Auto Care only cleans temporary files.'; Invoke-DailyPcCleanup -Quiet; return }

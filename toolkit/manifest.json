@@ -1,11 +1,11 @@
 {
-    "build":  26,
-    "published":  "2026-11-14T10:04:02Z",
-    "notes":  "Guardian also on SM1022 (PC-36) and HD1022 until 21:00 BD",
+    "build":  27,
+    "published":  "2026-11-14T10:11:05Z",
+    "notes":  "After an update, stay light: only apply settings and report at background priority (no cleanup or Defender download whil",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "688f0e8aac04d36c88604a84a699e8ac3401dc4e1c7b22a855b05edb6cd8a8d1"
+                      "sha256":  "515be864ff08f0e8498098c24e4fc2b230cfbf359e82a9cf159700d77912beb5"
                   },
                   {
                       "name":  "config.json",
