@@ -1,15 +1,15 @@
 {
-    "build":  27,
-    "published":  "2026-11-14T10:11:05Z",
-    "notes":  "After an update, stay light: only apply settings and report at background priority (no cleanup or Defender download whil",
+    "build":  28,
+    "published":  "2026-11-14T10:25:57Z",
+    "notes":  "Guardian ends at 19:00 BD today instead of 21:00",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "515be864ff08f0e8498098c24e4fc2b230cfbf359e82a9cf159700d77912beb5"
+                      "sha256":  "80bfe8391407e2dce32cfeb9eaffcdd983f4f5c5d7addf67cf8435497a8ce0ea"
                   },
                   {
                       "name":  "config.json",
-                      "sha256":  "312d01d62f41578be8cc356046e94abaa00de2ac085d79bde399f689c2ef1883"
+                      "sha256":  "5fe12bc9713b468d39b4b9da7c3021659720ca7bcb8b3911f5c21c2b85c99352"
                   }
               ]
 }

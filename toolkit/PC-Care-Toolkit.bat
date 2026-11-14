@@ -3317,7 +3317,7 @@ function Invoke-UndoAll {
 # Outlook offline months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '27'
+$script:BuildStamp     = '28'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3348,7 +3348,7 @@ $script:DefaultConfig = [ordered]@{
     viberWatchPcs             = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60', 'PC-36', 'DESKTOP-Q7TUN05')
     guardianPcs               = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60', 'PC-36', 'DESKTOP-Q7TUN05')
     viberReopenSeconds        = 60
-    viberWatchUntilBd         = '2026-11-14 21:00'
+    viberWatchUntilBd         = '2026-11-14 19:00'
 }
 function Get-Cfg([string]$Name) {
     $value = $script:DefaultConfig[$Name]

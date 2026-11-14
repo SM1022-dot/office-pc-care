@@ -133,5 +133,10 @@
         "build":  27,
         "published":  "2026-11-14T10:11:05Z",
         "notes":  "After an update, stay light: only apply settings and report at background priority (no cleanup or Defender download whil"
+    },
+    {
+        "build":  28,
+        "published":  "2026-11-14T10:25:57Z",
+        "notes":  "Guardian ends at 19:00 BD today instead of 21:00"
     }
 ]
