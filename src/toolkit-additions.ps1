@@ -1373,8 +1373,8 @@ $script:DefaultConfig = [ordered]@{
     outlookDisableAllAddins   = $true
     defenderQuickScanBdTime   = '20:45'
     defenderCpuLimitPercent   = 20
-    viberWatchPcs             = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60')
-    guardianPcs               = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60')
+    viberWatchPcs             = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60', 'PC-36', 'DESKTOP-Q7TUN05')
+    guardianPcs               = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60', 'PC-36', 'DESKTOP-Q7TUN05')
     viberReopenSeconds        = 60
     viberWatchUntilBd         = '2026-11-14 21:00'
 }
