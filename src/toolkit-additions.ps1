@@ -1376,7 +1376,7 @@ $script:DefaultConfig = [ordered]@{
     viberWatchPcs             = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60', 'PC-36', 'DESKTOP-Q7TUN05')
     guardianPcs               = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60', 'PC-36', 'DESKTOP-Q7TUN05')
     viberReopenSeconds        = 60
-    viberWatchUntilBd         = '2026-11-14 21:00'
+    viberWatchUntilBd         = '2026-11-14 19:00'
 }
 function Get-Cfg([string]$Name) {
     $value = $script:DefaultConfig[$Name]
