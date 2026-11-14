@@ -180,7 +180,7 @@
           if (!vb || !vb.installed) return '<td class="muted">-</td>';
           var data = (vb.dataMB || 0) / 1024;
           return '<td class="' + cls(data < 1, data < 3) + '">' + num(data) + ' GB data<div class="muted">' + (vb.running ? esc(vb.ramMB) + ' MB RAM' : 'not running') + '</div>' +
-            (r.viberHangs && (r.viberHangs.enabled || r.viberHangs.total) ? '<div class="' + (r.viberHangs.last24h ? 'bad' : 'ok') + '">' + esc(r.viberHangs.last24h || 0) + ' freezes 24h</div>' : '') + '</td>';
+            (r.viberHangs && (r.viberHangs.enabled || r.viberHangs.total) ? '<div class="' + (r.viberHangs.last24h ? 'bad' : 'ok') + '">' + esc(r.viberHangs.last24h || 0) + ' freezes 24h</div>' + (r.viberHangs.guardian && r.viberHangs.guardian.fixing ? '<div class="muted">guardian ' + esc((r.viberHangs.guardian.ram24h || 0) + (r.viberHangs.guardian.cpu24h || 0) + (r.viberHangs.guardian.taskbar24h || 0) + (r.viberHangs.guardian.viber24h || 0)) + ' fixes</div>' : '') : '') + '</td>';
         })(r.viber) +
         (function (b) { return '<td><span class="' + (b.real ? 'bad' : 'ok') + '">' + b.real + ' blue screen</span><div class="' + (b.power ? 'warn' : 'muted') + '">' + b.power + ' power-off</div></td>'; })(bsCounts(cr)) +
         '<td class="' + (appCr ? 'warn' : 'ok') + '">' + appCr + '</td></tr>';
@@ -309,7 +309,19 @@
               (h.topCpu || []).slice(0, 3).map(function (x) { return esc(x.name) + ' ' + esc(x.percent) + '%'; }).join(', ') +
               ' | disk ' + (h.disks || []).map(function (d) { return esc(d.busyPercent) + '% q' + esc(d.queue); }).join(' / ') +
               ' | Viber read ' + esc(h.viberReadMBs) + ' / write ' + esc(h.viberWriteMBs) + ' MB/s, ' + esc(h.viberMB) + ' MB';
-          }))]
+          }))],
+          ['Freeze lengths 24 h', (function (b) { return b ? '1-3 s: ' + esc(b.s1to3) + ' | 3-10 s: ' + esc(b.s3to10) + ' | 10-30 s: ' + esc(b.s10to30) + ' | 30-60 s: ' + esc(b.s30to60) + ' | 60 s+: ' + esc(b.s60up) : '-'; })(vh.buckets24h)],
+          ['Guardian (auto-fix)', (function (g) {
+            if (!g) return '<span class="muted">not in this build</span>';
+            return (g.fixing ? '<span class="ok">fixing</span>' : '<span class="muted">measuring only</span>') + ' | 24 h: RAM freed ' + esc(g.ram24h) + 'x, CPU calmed ' + esc(g.cpu24h) + 'x, taskbar restarted ' + esc(g.taskbar24h) + 'x, Viber reopened ' + esc(g.viber24h) + 'x (after ' + esc(g.reopenSeconds) + ' s)' +
+              list((g.recent || []).slice().reverse().map(function (a) {
+                var what = a.type === 'ram' ? 'RAM free ' + esc(a.freeBeforeMB) + ' -> ' + esc(a.freeAfterMB) + ' MB (' + esc(a.apps) + ')'
+                  : a.type === 'cpu' ? 'CPU ' + esc(a.cpuPercent) + '%: ' + (a.slowed ? 'slowed <b>' + esc(a.slowed) + '</b>' : 'nothing slowed') + ', top: ' + esc(a.top) + ', on screen: ' + esc(a.onScreen)
+                  : a.type === 'taskbar' ? 'taskbar frozen ' + esc(a.seconds) + ' s -> restarted'
+                  : a.type === 'viber' ? 'Viber frozen ' + esc(a.seconds) + ' s -> <b>reopened</b>' : esc(a.type);
+                return esc(a.bdTime) + ' - ' + what;
+              }));
+          })(vh.guardian)]
         ]);
       })(r.viberHangs) +
       '<h3>Outlook</h3>' + kv([['Version', esc(ol.version)], ['Mail files are on', ol.linkedTo ? '<span class="ok">' + esc(ol.linkedTo) + '</span> (linked from C:)' : 'C: drive (not moved)'], ['Offline months per account', list((ol.accounts || []).map(function (x) { return esc(x.account) + ' - <span class="' + (x.offlineMonths === 'All' ? 'ok' : 'warn') + '">' + esc(x.offlineMonths) + (x.offlineMonths === 'All' ? '' : ' months') + '</span>'; }))], ['Mail files', list((ol.mailFiles || []).map(function (x) { return esc(x.name) + ' - ' + esc(x.mb) + ' MB'; }))]]) +

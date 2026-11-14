@@ -968,6 +968,20 @@ function New-ITReport([string]$OutDir = '') {
             $dk = (@($h.disks) | ForEach-Object { [string]$_.busyPercent + '% q' + $_.queue }) -join ' / '
             $L.Add(('{0}  {1,5} s{2}  RAM free {3} MB  CPU {4}% ({5})  disk {6}  Viber read {7} / write {8} MB/s' -f $h.bdTime, $h.seconds, $(if ($h.notResponding) { ' NR' } else { '   ' }), $h.ramFreeMB, $h.cpuPercent, $top, $dk, $h.viberReadMBs, $h.viberWriteMBs))
         }
+        $g = $vh.guardian
+        if ($g -and ($g.fixing -or @($g.recent).Count)) {
+            $L.Add(('Guardian    : fixing {0}   last 24 h: RAM freed {1}x, CPU calmed {2}x, taskbar restarted {3}x, Viber reopened {4}x (after {5} s)' -f $g.fixing, $g.ram24h, $g.cpu24h, $g.taskbar24h, $g.viber24h, $g.reopenSeconds))
+            foreach ($a in @($g.recent)) {
+                $what = switch ([string]$a.type) {
+                    'ram' { 'RAM free {0} -> {1} MB ({2})' -f $a.freeBeforeMB, $a.freeAfterMB, $a.apps }
+                    'cpu' { 'CPU {0}%: slowed [{1}] top: {2}' -f $a.cpuPercent, $a.slowed, $a.top }
+                    'taskbar' { 'taskbar frozen {0} s -> restarted' -f $a.seconds }
+                    'viber' { 'Viber frozen {0} s -> reopened' -f $a.seconds }
+                    default { [string]$a.type }
+                }
+                $L.Add(('{0}  {1}' -f $a.bdTime, $what))
+            }
+        }
         $L.Add('')
     }
     $L.Add('== TOP 15 APPS BY MEMORY ==')
@@ -1359,8 +1373,10 @@ $script:DefaultConfig = [ordered]@{
     outlookDisableAllAddins   = $true
     defenderQuickScanBdTime   = '20:45'
     defenderCpuLimitPercent   = 20
-    viberWatchPcs             = @('PC-36')
-    viberWatchUntilBd         = '2026-11-13 18:45'
+    viberWatchPcs             = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60')
+    guardianPcs               = @('PC-69', 'DESKTOP-9J0SK0T', 'PC-60')
+    viberReopenSeconds        = 60
+    viberWatchUntilBd         = '2026-11-14 21:00'
 }
 function Get-Cfg([string]$Name) {
     $value = $script:DefaultConfig[$Name]
@@ -2034,6 +2050,14 @@ function Test-ViberWatchEnabled {
     if (-not $until -or [DateTime]::UtcNow.AddHours(6).ToString('yyyy-MM-dd HH:mm') -ge $until) { return $false }
     return (($pcs -contains '*') -or ($pcs -contains $env:COMPUTERNAME.ToUpperInvariant()))
 }
+function Test-GuardianActs {
+    # Guardian = the same hidden watcher, but it also FIXES: frees RAM, slows a background CPU hog,
+    # restarts a frozen taskbar and reopens Viber after 'viberReopenSeconds' of Not Responding.
+    # Only on PCs in config 'guardianPcs' ('*' = all); elsewhere the watcher only measures.
+    if (-not (Test-ViberWatchEnabled)) { return $false }
+    $pcs = @(Get-Cfg 'guardianPcs' | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() })
+    return (($pcs -contains '*') -or ($pcs -contains $env:COMPUTERNAME.ToUpperInvariant()))
+}
 function Get-ViberWatchUntil {
     $u = ([string](Get-Cfg 'viberWatchUntilBd')).Trim()
     if ($u.Length -eq 10) { $u += ' 23:59' }
@@ -2055,60 +2079,106 @@ function Update-ViberWatch {
     $runner = @'
 $ErrorActionPreference = 'SilentlyContinue'
 $until = '__UNTIL__'
-try { (Get-Process -Id $PID).PriorityClass = 'Idle' } catch {}
+$act = __ACT__
+$viberName = 'Viber'
+# Limits. RAM: free below $ramLowMB for $ramLowSecs. CPU: above $cpuHighPct for $cpuHighSecs.
+$ramLowMB = 600; $ramLowSecs = 30; $ramCooldown = 300
+$cpuHighPct = 90; $cpuHighSecs = 20; $cpuCooldown = 120; $cpuRestoreSecs = 300
+$trayHangSecs = 30; $trayCooldown = 600
+$viberHangSecs = __VIBERSECS__; $viberCooldown = 900
+try { (Get-Process -Id $PID).PriorityClass = 'BelowNormal' } catch {}
 $created = $false
 $mutex = New-Object System.Threading.Mutex($true, 'Local\OfficePcCareViberWatch', [ref]$created)
 if (-not $created) { exit }
 Add-Type -TypeDefinition @"
 using System; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading;
-public static class PcCareViberWatch {
+public class PcCareProbe {
     [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, IntPtr l, uint f, uint t, out IntPtr r);
-    static Stopwatch clock = new Stopwatch(); static volatile bool done = true; static long replyMs;
+    Stopwatch clock = new Stopwatch(); volatile bool done = true; long replyMs;
     // Sends WM_NULL on a helper thread and notes the exact moment the window answers, so the
     // freeze length stays exact while the main script is busy measuring the PC.
-    public static void Probe(IntPtr h) {
+    public void Start(IntPtr h) {
         done = false; replyMs = -1; clock.Restart();
         Thread t = new Thread(delegate () { IntPtr r; SendMessageTimeout(h, 0, IntPtr.Zero, IntPtr.Zero, 0, 600000, out r); replyMs = clock.ElapsedMilliseconds; done = true; });
         t.IsBackground = true; t.Start();
     }
-    public static bool Done { get { return done; } }
-    public static double ElapsedSeconds { get { return clock.Elapsed.TotalSeconds; } }
-    public static double ReplySeconds { get { return replyMs / 1000.0; } }
+    public bool Done { get { return done; } }
+    public double ElapsedSeconds { get { return clock.Elapsed.TotalSeconds; } }
+    public double ReplySeconds { get { return replyMs / 1000.0; } }
+}
+public static class PcCareNative {
     [StructLayout(LayoutKind.Sequential)] public class Mem { public uint len = 64; public uint load; public ulong totalPhys, availPhys, totalPage, availPage, totalVirt, availVirt, availExt; }
     [DllImport("kernel32.dll")] public static extern bool GlobalMemoryStatusEx([In, Out] Mem m);
     [StructLayout(LayoutKind.Sequential)] public struct Io { public ulong rOps, wOps, oOps, rBytes, wBytes, oBytes; }
     [DllImport("kernel32.dll")] public static extern bool GetProcessIoCounters(IntPtr h, out Io c);
+    [DllImport("psapi.dll")] public static extern bool EmptyWorkingSet(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string name);
+    [DllImport("kernel32.dll")] static extern bool GetSystemTimes(out long idle, out long kernel, out long user);
+    public static int ForegroundPid() { uint p; GetWindowThreadProcessId(GetForegroundWindow(), out p); return (int)p; }
+    static long lastIdle, lastTotal;
+    // Whole-PC CPU use (percent) since the previous call.
+    public static double CpuPercent() {
+        long i, k, u; if (!GetSystemTimes(out i, out k, out u)) return 0;
+        long total = k + u, dI = i - lastIdle, dT = total - lastTotal; lastIdle = i; lastTotal = total;
+        return dT <= 0 ? 0 : Math.Max(0, Math.Min(100, 100.0 * (dT - dI) / dT));
+    }
+    public static int FreeMB() { Mem m = new Mem(); GlobalMemoryStatusEx(m); return (int)(m.availPhys / 1048576); }
 }
 "@
 $dir = Join-Path $env:LOCALAPPDATA 'Office-PC-Care-Toolkit'
 New-Item -ItemType Directory -Path $dir -Force | Out-Null
 $log = Join-Path $dir 'viber-hangs.jsonl'
+$actLog = Join-Path $dir 'guardian-actions.jsonl'
 $statusFile = Join-Path $dir 'viber-watch-status.json'
 $started = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-$checks = 0; $lastStatus = [DateTime]::MinValue
+$checks = 0; $actions = 0; $lastStatus = [DateTime]::MinValue
 $cores = [Environment]::ProcessorCount
-function Get-Snapshot($v) {
-    $s = [ordered]@{}
-    $m = New-Object PcCareViberWatch+Mem; [void][PcCareViberWatch]::GlobalMemoryStatusEx($m)
-    $s.ramFreeMB = [int]($m.availPhys / 1MB); $s.ramLoad = [int]$m.load
-    $s.commitUsedMB = [int](($m.totalPage - $m.availPage) / 1MB); $s.commitLimitMB = [int]($m.totalPage / 1MB)
+$mySession = (Get-Process -Id $PID).SessionId
+# Never slowed down or trimmed: the apps staff work in, the VM and Windows' own shell.
+$protect = @('Viber', 'OUTLOOK', 'vmware', 'vmware-vmx', 'vmware-unity-helper', 'vmware-tray', 'mstsc', 'explorer', 'dwm', 'AnyDesk', 'UltraViewer_Desktop', 'wscript', 'powershell')
+function Add-Line([string]$File, $Record) {
+    Add-Content -LiteralPath $File -Value ($Record | ConvertTo-Json -Depth 4 -Compress) -Encoding UTF8
+    if ((Get-Item -LiteralPath $File).Length -gt 600KB) { $keep = @(Get-Content -LiteralPath $File -Encoding UTF8 | Select-Object -Last 300); Set-Content -LiteralPath $File -Value $keep -Encoding UTF8 }
+}
+function Add-Action([string]$Type, $Fields) {
+    $now = [DateTime]::UtcNow
+    $rec = [ordered]@{ time = $now.ToString('yyyy-MM-ddTHH:mm:ssZ'); bdTime = $now.AddHours(6).ToString('yyyy-MM-dd HH:mm:ss'); type = $Type }
+    foreach ($k in $Fields.Keys) { $rec[$k] = $Fields[$k] }
+    Add-Line $actLog $rec
+    $script:actions++
+}
+function Get-ForegroundName { try { return (Get-Process -Id ([PcCareNative]::ForegroundPid())).ProcessName } catch { return '' } }
+function Get-TopCpu([int]$Ms = 1000) {
+    # CPU use per app in this user's session over a short moment.
     $a = @{}; foreach ($p in @(Get-Process)) { if ($p.Id -and $p.Id -ne $PID) { try { $a[$p.Id] = $p.TotalProcessorTime.TotalMilliseconds } catch {} } }
-    $io0 = New-Object PcCareViberWatch+Io; $io1 = New-Object PcCareViberWatch+Io
-    try { [void][PcCareViberWatch]::GetProcessIoCounters($v.Handle, [ref]$io0) } catch {}
-    $d0 = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk | Where-Object { $_.Name -ne '_Total' })
     $clock = [Diagnostics.Stopwatch]::StartNew()
-    Start-Sleep -Milliseconds 1000
+    Start-Sleep -Milliseconds $Ms
     $ms = [math]::Max(500, $clock.Elapsed.TotalMilliseconds)
-    $use = @{}
+    $rows = @()
     foreach ($p in @(Get-Process)) {
         if (-not $a.ContainsKey($p.Id)) { continue }
         try { $d = $p.TotalProcessorTime.TotalMilliseconds - $a[$p.Id] } catch { continue }
-        if ($d -gt 0) { $use[$p.ProcessName] = [double]$use[$p.ProcessName] + $d }
+        if ($d -gt 0) { $rows += [pscustomobject]@{ Proc = $p; Name = $p.ProcessName; Percent = [math]::Round([math]::Min(100, 100 * $d / ($ms * $cores)), 1) } }
     }
-    $s.topCpu = @($use.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 6 | ForEach-Object { [ordered]@{ name = $_.Key; percent = [math]::Round([math]::Min(100, 100 * $_.Value / ($ms * $cores)), 1) } })
-    $s.cpuPercent = [math]::Round([math]::Min(100, 100 * (($use.Values | Measure-Object -Sum).Sum) / ($ms * $cores)), 1)
-    try { [void][PcCareViberWatch]::GetProcessIoCounters($v.Handle, [ref]$io1) } catch {}
-    $sec = $ms / 1000
+    return @($rows | Sort-Object Percent -Descending)
+}
+function Get-Snapshot($v) {
+    $s = [ordered]@{}
+    $m = New-Object PcCareNative+Mem; [void][PcCareNative]::GlobalMemoryStatusEx($m)
+    $s.ramFreeMB = [int]($m.availPhys / 1MB); $s.ramLoad = [int]$m.load
+    $s.commitUsedMB = [int](($m.totalPage - $m.availPage) / 1MB); $s.commitLimitMB = [int]($m.totalPage / 1MB)
+    $io0 = New-Object PcCareNative+Io; $io1 = New-Object PcCareNative+Io
+    try { [void][PcCareNative]::GetProcessIoCounters($v.Handle, [ref]$io0) } catch {}
+    $d0 = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk | Where-Object { $_.Name -ne '_Total' })
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $top = Get-TopCpu 1000
+    $sec = [math]::Max(0.5, $clock.Elapsed.TotalSeconds)
+    $byName = @{}; foreach ($r in $top) { $byName[$r.Name] = [double]$byName[$r.Name] + $r.Percent }
+    $s.topCpu = @($byName.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 6 | ForEach-Object { [ordered]@{ name = $_.Key; percent = [math]::Round($_.Value, 1) } })
+    $s.cpuPercent = [math]::Round([math]::Min(100, (($byName.Values | Measure-Object -Sum).Sum)), 1)
+    try { [void][PcCareNative]::GetProcessIoCounters($v.Handle, [ref]$io1) } catch {}
     $s.viberReadMBs = [math]::Round(($io1.rBytes - $io0.rBytes) / 1MB / $sec, 1)
     $s.viberWriteMBs = [math]::Round(($io1.wBytes - $io0.wBytes) / 1MB / $sec, 1)
     try { $v.Refresh(); $s.viberMB = [int]($v.WorkingSet64 / 1MB); $s.viberPrivateMB = [int]($v.PrivateMemorySize64 / 1MB); $s.viberThreads = $v.Threads.Count } catch {}
@@ -2122,41 +2192,143 @@ function Get-Snapshot($v) {
     })
     return $s
 }
-while ($true) {
-    if ([DateTime]::UtcNow.AddHours(6).ToString('yyyy-MM-dd HH:mm') -ge $until) { break }
-    if (-not (Test-Path -LiteralPath $PSCommandPath)) { break }
-    if (([DateTime]::UtcNow - $lastStatus).TotalMinutes -ge 10) {
-        $me = Get-Process -Id $PID
-        ([ordered]@{ started = $started; lastAlive = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); checks = $checks; watcherMB = [int]($me.WorkingSet64 / 1MB); watcherPrivateMB = [int]($me.PrivateMemorySize64 / 1MB) } | ConvertTo-Json -Compress) | Set-Content -LiteralPath $statusFile -Encoding UTF8
-        $lastStatus = [DateTime]::UtcNow
+function Invoke-RamRelief {
+    # Ask Windows to take back memory that background apps are not using right now. Apps keep
+    # running and nothing is closed; the app on screen and the protected apps are left alone.
+    $before = [PcCareNative]::FreeMB()
+    $fg = Get-ForegroundName
+    $names = @{}
+    foreach ($p in @(Get-Process | Where-Object { $_.SessionId -eq $mySession -and $_.Id -ne $PID -and $_.WorkingSet64 -gt 80MB })) {
+        if ($protect -contains $p.ProcessName -or $p.ProcessName -eq $fg) { continue }
+        try { if ([PcCareNative]::EmptyWorkingSet($p.Handle)) { $names[$p.ProcessName] = 1 + [int]$names[$p.ProcessName] } } catch {}
     }
-    $v = Get-Process -Name 'Viber' | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
-    if (-not $v) { Start-Sleep -Seconds 5; continue }
-    if (-not [PcCareViberWatch]::Done) { Start-Sleep -Seconds 1; continue }
-    $h = $v.MainWindowHandle
-    $checks++
-    $startUtc = [DateTime]::UtcNow
-    [PcCareViberWatch]::Probe($h)
-    while (-not [PcCareViberWatch]::Done -and [PcCareViberWatch]::ElapsedSeconds -lt 1) { Start-Sleep -Milliseconds 100 }
-    if ([PcCareViberWatch]::Done) { Start-Sleep -Seconds 1; continue }
-    # Viber did not answer for 1 second: it is frozen right now. Measure the PC while it is.
-    $snap = Get-Snapshot $v
-    while (-not [PcCareViberWatch]::Done -and -not $v.HasExited -and [PcCareViberWatch]::ElapsedSeconds -lt 600) { Start-Sleep -Milliseconds 250 }
-    $secs = $(if ([PcCareViberWatch]::Done) { [PcCareViberWatch]::ReplySeconds } else { [PcCareViberWatch]::ElapsedSeconds })
-    $rec = [ordered]@{ time = $startUtc.ToString('yyyy-MM-ddTHH:mm:ssZ'); bdTime = $startUtc.AddHours(6).ToString('yyyy-MM-dd HH:mm:ss'); seconds = [math]::Round($secs, 1); notResponding = ($secs -ge 5); closed = [bool]$v.HasExited }
-    foreach ($k in $snap.Keys) { $rec[$k] = $snap[$k] }
-    Add-Content -LiteralPath $log -Value ($rec | ConvertTo-Json -Depth 4 -Compress) -Encoding UTF8
-    if ((Get-Item -LiteralPath $log).Length -gt 600KB) { $keep = @(Get-Content -LiteralPath $log -Encoding UTF8 | Select-Object -Last 300); Set-Content -LiteralPath $log -Value $keep -Encoding UTF8 }
     Start-Sleep -Seconds 2
+    Add-Action 'ram' @{ freeBeforeMB = $before; freeAfterMB = [PcCareNative]::FreeMB(); apps = (@($names.GetEnumerator() | ForEach-Object { $_.Key + ' x' + $_.Value }) -join ', '); onScreen = $fg }
 }
+function Invoke-CpuCalm([double]$Total) {
+    # Slow down the one background app that is eating the CPU (never the app on screen).
+    $fg = Get-ForegroundName
+    $top = @(Get-TopCpu 1000 | Where-Object { $_.Proc.SessionId -eq $mySession })
+    $list = (@($top | Select-Object -First 3 | ForEach-Object { $_.Name + ' ' + $_.Percent + '%' }) -join ', ')
+    $hog = $top | Where-Object { $_.Percent -ge 20 -and $protect -notcontains $_.Name -and $_.Name -ne $fg } | Select-Object -First 1
+    if (-not $hog) { Add-Action 'cpu' @{ cpuPercent = [math]::Round($Total); slowed = ''; top = $list; onScreen = $fg }; return }
+    $done = ''
+    try {
+        if ($hog.Proc.PriorityClass -eq 'Normal') {
+            $hog.Proc.PriorityClass = 'BelowNormal'
+            $script:restore += [pscustomobject]@{ Id = $hog.Proc.Id; Start = $hog.Proc.StartTime; Due = [DateTime]::UtcNow.AddSeconds($cpuRestoreSecs) }
+            $done = $hog.Name
+        }
+    } catch {}
+    Add-Action 'cpu' @{ cpuPercent = [math]::Round($Total); slowed = $done; top = $list; onScreen = $fg }
+}
+function Restore-Priorities([switch]$All) {
+    $keep = @()
+    foreach ($r in @($script:restore)) {
+        if (-not $All -and $r.Due -gt [DateTime]::UtcNow) { $keep += $r; continue }
+        try { $p = Get-Process -Id $r.Id; if ($p.StartTime -eq $r.Start -and $p.PriorityClass -eq 'BelowNormal') { $p.PriorityClass = 'Normal' } } catch {}
+    }
+    $script:restore = $keep
+}
+function Restart-Shell([double]$Seconds) {
+    foreach ($p in @(Get-Process -Name 'explorer' | Where-Object { $_.SessionId -eq $mySession })) { try { $p.Kill() } catch {} }
+    Start-Sleep -Seconds 4
+    # Windows normally starts the taskbar again by itself; start it if it did not.
+    if (@(Get-Process -Name 'explorer' | Where-Object { $_.SessionId -eq $mySession }).Count -eq 0) { Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') }
+    Add-Action 'taskbar' @{ seconds = [math]::Round($Seconds) }
+}
+function Restart-Viber($v, [double]$Seconds) {
+    $exe = ''; try { $exe = $v.Path } catch {}
+    foreach ($p in @(Get-Process -Name $viberName | Where-Object { $_.SessionId -eq $mySession })) { try { $p.Kill() } catch {} }
+    Start-Sleep -Seconds 3
+    # Same launcher the toolkit uses at sign-in: full window, above-normal priority.
+    $launcher = Join-Path $env:ProgramData 'Office-PC-Care-Toolkit\viber-start.vbs'
+    if (Test-Path -LiteralPath $launcher) { Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList ('//B //NoLogo "' + $launcher + '"') }
+    elseif ($exe) { Start-Process -FilePath $exe }
+    Add-Action 'viber' @{ seconds = [math]::Round($Seconds) }
+}
+$restore = @()
+$vProbe = New-Object PcCareProbe; $v = $null; $vActive = $false; $vSnap = $null; $vStart = [DateTime]::UtcNow
+$tProbe = New-Object PcCareProbe; $tActive = $false
+$lowRam = 0; $highCpu = 0
+$lastRam = [DateTime]::MinValue; $lastCpu = [DateTime]::MinValue; $lastTray = [DateTime]::MinValue; $lastViber = [DateTime]::MinValue; $lastTrayProbe = [DateTime]::MinValue; $lastViberLookup = [DateTime]::MinValue
+[void][PcCareNative]::CpuPercent()
+$tick = [Diagnostics.Stopwatch]::StartNew()
+while ($true) {
+    $now = [DateTime]::UtcNow
+    if ($now.AddHours(6).ToString('yyyy-MM-dd HH:mm') -ge $until) { break }
+    if (-not (Test-Path -LiteralPath $PSCommandPath)) { break }
+    if (($now - $lastStatus).TotalMinutes -ge 5) {
+        $me = Get-Process -Id $PID
+        ([ordered]@{ started = $started; lastAlive = $now.ToString('yyyy-MM-ddTHH:mm:ssZ'); checks = $checks; actions = $actions; fixing = [bool]$act; watcherMB = [int]($me.WorkingSet64 / 1MB); watcherPrivateMB = [int]($me.PrivateMemorySize64 / 1MB) } | ConvertTo-Json -Compress) | Set-Content -LiteralPath $statusFile -Encoding UTF8
+        $lastStatus = $now
+    }
+    $secs = [math]::Max(0.2, $tick.Elapsed.TotalSeconds); $tick.Restart()
+
+    # --- Viber: note every freeze of 1 s or more; reopen Viber after a very long one. ---
+    if ($vActive) {
+        if ($vProbe.Done -or $v.HasExited) {
+            $len = $(if ($vProbe.Done) { $vProbe.ReplySeconds } else { $vProbe.ElapsedSeconds })
+            if ($vSnap -or $len -ge 1) {
+                $rec = [ordered]@{ time = $vStart.ToString('yyyy-MM-ddTHH:mm:ssZ'); bdTime = $vStart.AddHours(6).ToString('yyyy-MM-dd HH:mm:ss'); seconds = [math]::Round($len, 1); notResponding = ($len -ge 5); closed = [bool]$v.HasExited }
+                if ($vSnap) { foreach ($k in $vSnap.Keys) { $rec[$k] = $vSnap[$k] } }
+                Add-Line $log $rec
+            }
+            $vActive = $false; $vSnap = $null
+            if ($v.HasExited) { $v = $null; $vProbe = New-Object PcCareProbe }
+        } else {
+            $el = $vProbe.ElapsedSeconds
+            if ($el -ge 1 -and -not $vSnap) { $vSnap = Get-Snapshot $v }
+            if ($act -and $el -ge $viberHangSecs -and ($now - $lastViber).TotalSeconds -ge $viberCooldown) {
+                $rec = [ordered]@{ time = $vStart.ToString('yyyy-MM-ddTHH:mm:ssZ'); bdTime = $vStart.AddHours(6).ToString('yyyy-MM-dd HH:mm:ss'); seconds = [math]::Round($el, 1); notResponding = $true; closed = $false; reopened = $true }
+                if ($vSnap) { foreach ($k in $vSnap.Keys) { $rec[$k] = $vSnap[$k] } }
+                Add-Line $log $rec
+                Restart-Viber $v $el
+                $lastViber = [DateTime]::UtcNow
+                $v = $null; $vActive = $false; $vSnap = $null; $vProbe = New-Object PcCareProbe
+            }
+        }
+    } else {
+        if ((-not $v -or $v.HasExited) -and ($now - $lastViberLookup).TotalSeconds -ge 5) {
+            $lastViberLookup = $now
+            $v = Get-Process -Name $viberName | Where-Object { $_.SessionId -eq $mySession -and $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+        }
+        if ($v -and -not $v.HasExited) { $checks++; $vStart = [DateTime]::UtcNow; $vProbe.Start($v.MainWindowHandle); $vActive = $true }
+    }
+
+    if ($act) {
+        # --- RAM almost gone for a while ---
+        if ([PcCareNative]::FreeMB() -lt $ramLowMB) { $lowRam += $secs } else { $lowRam = 0 }
+        if ($lowRam -ge $ramLowSecs -and ($now - $lastRam).TotalSeconds -ge $ramCooldown) { Invoke-RamRelief; $lastRam = [DateTime]::UtcNow; $lowRam = 0 }
+        # --- CPU flat out for a while ---
+        $cpu = [PcCareNative]::CpuPercent()
+        if ($cpu -ge $cpuHighPct) { $highCpu += $secs } else { $highCpu = 0 }
+        if ($highCpu -ge $cpuHighSecs -and ($now - $lastCpu).TotalSeconds -ge $cpuCooldown) { Invoke-CpuCalm $cpu; $lastCpu = [DateTime]::UtcNow; $highCpu = 0; [void][PcCareNative]::CpuPercent() }
+        if ($restore.Count) { Restore-Priorities }
+        # --- Taskbar frozen ---
+        if ($tActive) {
+            if ($tProbe.Done) { $tActive = $false }
+            elseif ($tProbe.ElapsedSeconds -ge $trayHangSecs -and ($now - $lastTray).TotalSeconds -ge $trayCooldown) {
+                Restart-Shell $tProbe.ElapsedSeconds
+                $lastTray = [DateTime]::UtcNow; $tActive = $false; $tProbe = New-Object PcCareProbe
+            }
+        } elseif (($now - $lastTrayProbe).TotalSeconds -ge 5) {
+            $lastTrayProbe = $now
+            $tray = [PcCareNative]::FindWindow('Shell_TrayWnd', [NullString]::Value)
+            if ($tray -ne [IntPtr]::Zero) { $tProbe.Start($tray); $tActive = $true }
+        }
+    }
+    Start-Sleep -Milliseconds 1000
+}
+Restore-Priorities -All
 '@
     New-Item -ItemType Directory -Path $script:ToolRoot -Force | Out-Null
-    Set-Content -LiteralPath $script:ViberWatchScript -Value ($runner.Replace('__UNTIL__', (Get-ViberWatchUntil))) -Encoding UTF8
+    Set-Content -LiteralPath $script:ViberWatchScript -Value ($runner.Replace('__UNTIL__', (Get-ViberWatchUntil)).Replace('__ACT__', $(if (Test-GuardianActs) { '$true' } else { '$false' })).Replace('__VIBERSECS__', [string][math]::Max(20, [int](Get-Cfg 'viberReopenSeconds')))) -Encoding UTF8
     $vbs = 'CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""' + $script:ViberWatchScript + '""", 0, False'
     Set-Content -LiteralPath $script:ViberWatchLauncher -Value $vbs -Encoding ASCII
     try {
         $def = $svc.NewTask(0)
-        $def.RegistrationInfo.Description = 'Office PC Care Toolkit: measures Viber freezes for IT (measuring only, never touches Viber).'
+        $def.RegistrationInfo.Description = 'Office PC Care Toolkit: measures Viber freezes; on Guardian PCs also fixes low RAM, busy CPU, frozen taskbar and a long Viber hang.'
         $def.Settings.Enabled = $true
         $def.Settings.Hidden = $true
         $def.Settings.DisallowStartIfOnBatteries = $false
@@ -2192,6 +2364,16 @@ function Get-ViberHangStats($Profile) {
     $out.notResponding24h = @($day | Where-Object { $_.notResponding }).Count
     $out.longestSec24h = [double](($day | Measure-Object seconds -Maximum).Maximum)
     $out.recent = @($rows | Select-Object -Last 15)
+    $out.buckets24h = [ordered]@{ s1to3 = @($day | Where-Object { $_.seconds -lt 3 }).Count; s3to10 = @($day | Where-Object { $_.seconds -ge 3 -and $_.seconds -lt 10 }).Count; s10to30 = @($day | Where-Object { $_.seconds -ge 10 -and $_.seconds -lt 30 }).Count; s30to60 = @($day | Where-Object { $_.seconds -ge 30 -and $_.seconds -lt 60 }).Count; s60up = @($day | Where-Object { $_.seconds -ge 60 }).Count }
+    $acts = @()
+    try { $acts = @(Get-Content -LiteralPath (Join-Path $dir 'guardian-actions.jsonl') -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} }) } catch {}
+    $actDay = @($acts | Where-Object { try { [DateTime]::Parse($_.time).ToUniversalTime() -ge $since } catch { $false } })
+    $out.guardian = [ordered]@{
+        fixing = (Test-GuardianActs); reopenSeconds = [int](Get-Cfg 'viberReopenSeconds')
+        ram24h = @($actDay | Where-Object { $_.type -eq 'ram' }).Count; cpu24h = @($actDay | Where-Object { $_.type -eq 'cpu' }).Count
+        taskbar24h = @($actDay | Where-Object { $_.type -eq 'taskbar' }).Count; viber24h = @($actDay | Where-Object { $_.type -eq 'viber' }).Count
+        recent = @($acts | Select-Object -Last 25)
+    }
     return $out
 }
 function Send-ReportIfNewViberHangs {
@@ -2199,9 +2381,8 @@ function Send-ReportIfNewViberHangs {
     # the watcher has noted new freezes, so IT sees them the same day (also the last ones after it ends).
     $dir = Get-ViberWatchDir (Get-InteractiveProfile)
     if (-not $dir) { return }
-    $log = Join-Path $dir 'viber-hangs.jsonl'
-    if (-not (Test-Path -LiteralPath $log)) { return }
-    $stamp = (Get-Item -LiteralPath $log).LastWriteTimeUtc.ToString('o')
+    $stamp = (@((Join-Path $dir 'viber-hangs.jsonl'), (Join-Path $dir 'guardian-actions.jsonl')) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc.ToString('o') } | Sort-Object | Select-Object -Last 1)
+    if (-not $stamp) { return }
     $last = ''; try { $last = (Get-Content -LiteralPath $script:ViberWatchSentFile -Raw).Trim() } catch {}
     if ($stamp -eq $last) { return }
     if ((Test-Path -LiteralPath $script:ViberWatchSentFile) -and ((Get-Item -LiteralPath $script:ViberWatchSentFile).LastWriteTimeUtc -gt [DateTime]::UtcNow.AddMinutes(-60))) { return }
@@ -2212,7 +2393,7 @@ function Send-ReportIfNewViberHangs {
 
 function Invoke-UpdateCheck {
     Set-ViberPriority
-    try { if (-not (Test-ViberWatchEnabled)) { Update-ViberWatch } } catch {}
+    try { if (-not (Test-ViberWatchEnabled)) { $hadWatch = Test-Path -LiteralPath $script:ViberWatchScript; Update-ViberWatch; if ($hadWatch) { Set-BackgroundMode $true; Send-PcReport -Force } } } catch {}
     try { Send-ReportIfNewViberHangs } catch {}
     $updated = Invoke-SelfUpdate
     if ($updated -eq $true -and (Test-Path -LiteralPath $script:InstalledBat)) {
