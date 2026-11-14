@@ -118,5 +118,10 @@
         "build":  24,
         "published":  "2026-11-14T09:42:20Z",
         "notes":  "Outlook menu 9: move mail files to the other drive behind a link (skips PCs already linked); report and dashboard show w"
+    },
+    {
+        "build":  25,
+        "published":  "2026-11-14T09:59:19Z",
+        "notes":  "Guardian on RR823, MN822, JA326 until 21:00 BD: frees RAM, calms a background CPU hog, restarts a frozen taskbar, reopen"
     }
 ]

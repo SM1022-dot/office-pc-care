@@ -25,7 +25,15 @@
   "defenderQuickScanBdTime": "20:45",
   "defenderCpuLimitPercent": 20,
   "viberWatchPcs": [
-    "PC-36"
+    "PC-69",
+    "DESKTOP-9J0SK0T",
+    "PC-60"
   ],
-  "viberWatchUntilBd": "2026-11-13 18:45"
+  "viberWatchUntilBd": "2026-11-14 21:00",
+  "guardianPcs": [
+    "PC-69",
+    "DESKTOP-9J0SK0T",
+    "PC-60"
+  ],
+  "viberReopenSeconds": 60
 }
