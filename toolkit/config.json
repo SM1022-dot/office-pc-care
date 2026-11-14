@@ -20,7 +20,7 @@
   ],
   "slowStartDelaySeconds": 180,
   "slowStartGapSeconds": 25,
-  "outlookOfflineMonths": 6,
+  "outlookOfflineMonths": 0,
   "outlookDisableAllAddins": true,
   "defenderQuickScanBdTime": "20:45",
   "defenderCpuLimitPercent": 20,

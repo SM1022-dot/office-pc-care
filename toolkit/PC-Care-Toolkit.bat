@@ -3298,10 +3298,10 @@ function Invoke-UndoAll {
 
 # =====================================================================
 # v13: central config, signed self-update, slow start, VM internet,
-# Outlook 6 months + add-ins off, Chrome balanced + extension control,
+# Outlook offline months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '22'
+$script:BuildStamp     = '23'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -3325,7 +3325,7 @@ $script:DefaultConfig = [ordered]@{
     servicesManual            = @('WerSvc')
     slowStartDelaySeconds     = 180
     slowStartGapSeconds       = 25
-    outlookOfflineMonths      = 6
+    outlookOfflineMonths      = 0
     outlookDisableAllAddins   = $true
     defenderQuickScanBdTime   = '20:45'
     defenderCpuLimitPercent   = 20
@@ -3503,9 +3503,12 @@ function Disable-AllOutlookAddins {
     if ($n -gt 0) { Write-Done ('Outlook add-ins turned off: ' + $n + ' (applies when Outlook restarts).') } else { Write-Done 'No Outlook add-ins are loading.' }
 }
 function Set-OutlookOfflineMonths {
+    # Config 'outlookOfflineMonths': 0 = keep ALL mail in Outlook (Outlook's own default; staff need old
+    # mail in Inbox, *Default* and Trash). 1-24 = keep only that many months on the PC (whole account,
+    # Outlook cannot do this per folder). Outlook applies a change at its next start.
     $months = [int](Get-Cfg 'outlookOfflineMonths')
     $hive = Get-UserHive
-    if (-not $hive -or $months -lt 1) { return }
+    if (-not $hive -or $months -lt 0) { return }
     $root = $hive + '\Software\Microsoft\Office\16.0\Outlook\Profiles'
     if (-not (Test-Path -LiteralPath $root)) { Write-Skip 'No Outlook 2016 profile found.'; return }
     $n = 0
@@ -3514,10 +3517,20 @@ function Set-OutlookOfflineMonths {
         foreach ($acct in @(Get-ChildItem -LiteralPath $accounts -ErrorAction SilentlyContinue)) {
             if (-not (Get-RegValueRaw $acct.PSPath 'IMAP Server').Exists) { continue }
             $now = Get-RegValueRaw $acct.PSPath 'IMAP months to sync'
+            if ($months -eq 0) {
+                # No value = "All". Remove the limit and forget its undo entry (nothing left to undo).
+                if (-not $now.Exists) { continue }
+                try { Remove-ItemProperty -LiteralPath $acct.PSPath -Name 'IMAP months to sync' -ErrorAction Stop; $n++ } catch { continue }
+                $state = Get-UndoState
+                $id = $acct.PSPath + '|IMAP months to sync'
+                if ($state.Registry.ContainsKey($id)) { $state.Registry.Remove($id); Save-UndoState $state }
+                continue
+            }
             if ($now.Exists -and [int]$now.Value -eq $months) { continue }
             if (Set-TrackedReg $acct.PSPath 'IMAP months to sync' $months 'DWord') { $n++ }
         }
     }
+    if ($months -eq 0) { if ($n) { Write-Done ('Outlook keeps all mail again, old mail included (' + $n + ' account(s) changed; old mail comes back after Outlook is closed and opened, it can take hours).') }; return }
     Write-Done ('Outlook keeps the last ' + $months + ' months of mail on this PC (' + $n + ' account(s) changed now; older mail stays on the server).')
 }
 function Set-OfficeStartOptions([string]$Hive) {
