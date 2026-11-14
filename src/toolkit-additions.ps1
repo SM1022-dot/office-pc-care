@@ -2489,6 +2489,15 @@ function Invoke-AutoCare {
         Start-Process -FilePath (Join-Path $env:WINDIR 'System32\cmd.exe') -ArgumentList ('/d /c ""' + $script:InstalledBat + '" auto"') -WindowStyle Hidden -Wait
         return
     }
+    if ($env:PCTOOLKIT_CHAINED) {
+        # Started right after an update, while staff are working: stay light. Only apply the settings of
+        # the new build and report, at background priority. The cleanup, the Defender definitions
+        # download and the rest run at the normal Auto Care times, not after every update.
+        Set-BackgroundMode $true
+        if (Test-Path -LiteralPath $script:SetupMarker) { Invoke-ApplyAll }
+        Send-PcReport
+        return
+    }
     if (-not (Test-Path -LiteralPath $script:SetupMarker)) { Write-Skip 'PC setup has not been run. Auto Care only cleans temporary files.'; Invoke-DailyPcCleanup -Quiet; return }
     Invoke-DailyPcCleanup -Quiet
     Invoke-ApplyAll
