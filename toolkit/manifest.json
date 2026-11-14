@@ -1,11 +1,11 @@
 {
-    "build":  23,
-    "published":  "2026-11-14T09:24:12Z",
-    "notes":  "Outlook keeps all mail again (old mail in Inbox, Default and Trash was hidden by the 6-month limit)",
+    "build":  24,
+    "published":  "2026-11-14T09:42:20Z",
+    "notes":  "Outlook menu 9: move mail files to the other drive behind a link (skips PCs already linked); report and dashboard show w",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "544504d280200ba61f16326262e0f8079c16be44f0734c7bcd70c7275a3252f9"
+                      "sha256":  "cbb8b179aac09d824dc2206109370d37fc79914381deb4a6a4466f5e096da845"
                   },
                   {
                       "name":  "config.json",

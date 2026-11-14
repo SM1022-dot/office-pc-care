@@ -113,5 +113,10 @@
         "build":  23,
         "published":  "2026-11-14T09:24:12Z",
         "notes":  "Outlook keeps all mail again (old mail in Inbox, Default and Trash was hidden by the 6-month limit)"
+    },
+    {
+        "build":  24,
+        "published":  "2026-11-14T09:42:20Z",
+        "notes":  "Outlook menu 9: move mail files to the other drive behind a link (skips PCs already linked); report and dashboard show w"
     }
 ]

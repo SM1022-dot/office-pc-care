@@ -2967,6 +2967,8 @@ function New-ITReport([string]$OutDir = '') {
     if ($ol) { $L.Add(('Outlook     : {0} (version {1})' -f $ol, (Get-Item -LiteralPath $ol).VersionInfo.ProductVersion)) } else { $L.Add('Outlook     : not found') }
     if ($profile.LocalPath) {
         $dataFolders = @((Join-Path $profile.LocalPath 'AppData\Local\Microsoft\Outlook'), (Join-Path $profile.LocalPath 'Documents\Outlook Files'))
+        $mailLink = Get-FolderLinkTarget (Get-OutlookDataFolder $profile)
+        $L.Add(('Mail folder : {0}' -f $(if ($mailLink) { 'linked to ' + $mailLink } else { 'on C: (not moved to another drive)' })))
         foreach ($f in $dataFolders) { foreach ($d in @(Get-ChildItem -LiteralPath $f -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '(?i)^\.(ost|pst)$' })) { $L.Add(('Mail file   : {0,-45} {1,8:N0} MB' -f $d.Name, ($d.Length / 1MB))) } }
     }
     $L.Add('')
@@ -3089,7 +3091,7 @@ function Get-PcReportData {
             }
         }
     }
-    $r.outlook = [ordered]@{ accounts = $acctList; version = $(if ($olExe) { [string](Get-Item -LiteralPath $olExe).VersionInfo.ProductVersion } else { '' }); mailFiles = $mail; totalMB = [int](($mail | ForEach-Object { $_.mb } | Measure-Object -Sum).Sum) }
+    $r.outlook = [ordered]@{ accounts = $acctList; version = $(if ($olExe) { [string](Get-Item -LiteralPath $olExe).VersionInfo.ProductVersion } else { '' }); mailFiles = $mail; totalMB = [int](($mail | ForEach-Object { $_.mb } | Measure-Object -Sum).Sum); linkedTo = [string](Get-FolderLinkTarget (Get-OutlookDataFolder $profile)) }
     try { $r.vpn = @(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.InterfaceDescription -match '(?i)vpn|tap-|wintun|wireguard|nord|express|lightway' } | ForEach-Object { [ordered]@{ name = [string]$_.Name; status = [string]$_.Status } }) } catch { $r.vpn = @() }
     $vmx = @(Get-Process -Name 'vmware-vmx' -ErrorAction SilentlyContinue)
     $r.vm = [ordered]@{ running = ($vmx.Count -gt 0); memMB = [int](($vmx | Measure-Object WorkingSet64 -Sum).Sum / 1MB) }
@@ -3301,7 +3303,7 @@ function Invoke-UndoAll {
 # Outlook offline months + add-ins off, Chrome balanced + extension control,
 # services, Defender light, Office start, blue-screen report.
 # =====================================================================
-$script:BuildStamp     = '23'
+$script:BuildStamp     = '24'
 $script:ToolkitBuild   = 0
 if ($script:BuildStamp -match '^\d+$') { $script:ToolkitBuild = [int]$script:BuildStamp }
 $script:UpdateBaseUrl  = 'https://raw.githubusercontent.com/SM1022-dot/office-pc-care/main/toolkit/'
@@ -4286,6 +4288,138 @@ function Invoke-AutoCare {
     Update-DefenderSignatures
     Send-PcReport
 }
+# ---------------------------------------------------------------------
+# Outlook mail files on another drive (the office "MK link" method): move
+# %LOCALAPPDATA%\Microsoft\Outlook to <drive>:\Outlook_Data\Outlook and leave a junction in its
+# place, so C: gets its space back and Outlook notices no difference. PCs where IT already made
+# the link by hand are detected and left alone. Never runs by itself: Outlook must be closed.
+# ---------------------------------------------------------------------
+function Get-OutlookDataFolder($Profile) {
+    if (-not $Profile -or -not $Profile.LocalPath) { return $null }
+    return (Join-Path $Profile.LocalPath 'AppData\Local\Microsoft\Outlook')
+}
+function Get-FolderLinkTarget([string]$Path) {
+    # Returns where a junction / folder link points, or $null for a normal folder.
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $null }
+        $target = [string](@($item.Target) | Select-Object -First 1)
+        if ($target) { return ($target -replace '^\\\?\?\\', '') }
+        return '(linked folder)'
+    } catch { return $null }
+}
+function Get-FolderSizeBytes([string]$Path) {
+    return [long]((Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
+}
+function Find-MailTargetDrive([long]$NeedBytes) {
+    # Best other drive for the mail files: fixed NTFS, not C:, not USB, healthy disk, enough free space.
+    $out = [ordered]@{ Letter = $null; FreeGB = 0; Notes = @() }
+    $sys = $env:SystemDrive.TrimEnd('\')
+    $best = $null
+    foreach ($d in @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue)) {
+        if ($d.DeviceID -eq $sys) { continue }
+        $letter = $d.DeviceID.TrimEnd(':')
+        if ($d.FileSystem -ne 'NTFS') { $out.Notes += ($d.DeviceID + ' is not NTFS'); continue }
+        $bus = ''; $health = ''
+        try {
+            $disk = Get-Partition -DriveLetter $letter -ErrorAction Stop | Get-Disk -ErrorAction Stop
+            $bus = [string]$disk.BusType
+            $pd = Get-PhysicalDisk -ErrorAction Stop | Where-Object { [string]$_.DeviceId -eq [string]$disk.Number } | Select-Object -First 1
+            if ($pd) { $health = [string]$pd.HealthStatus }
+        } catch {}
+        if ($bus -eq 'USB') { $out.Notes += ($d.DeviceID + ' is a USB drive'); continue }
+        if ($health -and $health -ne 'Healthy') { $out.Notes += ($d.DeviceID + ' disk health is ' + $health + ' (not safe for mail)'); continue }
+        if ([long]$d.FreeSpace -lt ($NeedBytes + 5GB)) { $out.Notes += ($d.DeviceID + ' has only ' + [math]::Round($d.FreeSpace / 1GB, 1) + ' GB free'); continue }
+        if (-not $best -or [long]$d.FreeSpace -gt [long]$best.FreeSpace) { $best = $d }
+    }
+    if ($best) { $out.Letter = $best.DeviceID.TrimEnd(':'); $out.FreeGB = [math]::Round($best.FreeSpace / 1GB, 1) }
+    return [pscustomobject]$out
+}
+function Move-FolderBehindJunction([string]$Source, [string]$Target, [string]$OwnerSid = '') {
+    # Copy -> verify every file -> swap in a junction -> only then delete the old copy.
+    # If anything fails before the swap, the original folder is untouched.
+    try {
+        $Source = $Source.TrimEnd('\'); $Target = $Target.TrimEnd('\')
+        if (Get-FolderLinkTarget $Source) { Write-Skip 'This folder is already a link. Nothing to do.'; return $false }
+        if (-not (Test-Path -LiteralPath $Source -PathType Container)) { Write-Skip ('Folder not found: ' + $Source); return $false }
+        if ((Test-Path -LiteralPath $Target) -and @(Get-ChildItem -LiteralPath $Target -Force -ErrorAction SilentlyContinue).Count -gt 0) { Write-Skip ('The new folder already has files in it: ' + $Target); return $false }
+        New-Item -ItemType Directory -Path $Target -Force -ErrorAction Stop | Out-Null
+        if ($OwnerSid) {
+            # Mail stays private: only this user, Windows and administrators can open the new folder.
+            & icacls.exe $Target /inheritance:r /grant:r ('*' + $OwnerSid + ':(OI)(CI)F') '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q | Out-Null
+        }
+        Write-Host ('Copying mail files to ' + $Target + ' ... do not close this window.') -ForegroundColor Cyan
+        & robocopy.exe $Source $Target /E /COPY:DAT /DCOPY:DAT /R:1 /W:2 /J /XJ /NJH /NJS /NDL /NC
+        $rc = $LASTEXITCODE
+        if ($rc -ge 8) { Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue; Write-Skip ('Copy failed (robocopy code ' + $rc + '). Nothing was changed; your mail files are still in the old place.'); return $false }
+        # .NET listing returns paths that start with exactly $Source, so the relative part is exact.
+        $srcFiles = @([IO.Directory]::GetFiles($Source, '*', 'AllDirectories'))
+        foreach ($f in $srcFiles) {
+            $copy = Join-Path $Target $f.Substring($Source.Length + 1)
+            if (-not [IO.File]::Exists($copy) -or (New-Object IO.FileInfo $copy).Length -ne (New-Object IO.FileInfo $f).Length) { Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue; Write-Skip ('Copy check failed for ' + (Split-Path -Leaf $f) + '. Nothing was changed; your mail files are still in the old place.'); return $false }
+        }
+        Write-Done ('All ' + $srcFiles.Count + ' files copied and checked.')
+        $old = $Source + '.pccare-old'
+        if (Test-Path -LiteralPath $old) { Write-Skip ('An old leftover folder is in the way: ' + $old + '. Tell IT.'); return $false }
+        Rename-Item -LiteralPath $Source -NewName (Split-Path -Leaf $old) -ErrorAction Stop
+        try { New-Item -ItemType Junction -Path $Source -Value $Target -ErrorAction Stop | Out-Null } catch {}
+        $linked = Get-FolderLinkTarget $Source
+        $seen = 0; try { $seen = @([IO.Directory]::GetFiles($Source, '*', 'AllDirectories')).Count } catch {}
+        if (-not $linked -or $seen -ne $srcFiles.Count) {
+            # Put everything back exactly as it was.
+            if ($linked) { [IO.Directory]::Delete($Source) }
+            Rename-Item -LiteralPath $old -NewName (Split-Path -Leaf $Source) -ErrorAction Stop
+            Write-Skip 'The link could not be created. Everything was put back; your mail files are still in the old place.'
+            return $false
+        }
+        Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $old) { Write-Note ('Old copy could not be fully removed (tell IT): ' + $old) }
+        Write-Done ('Mail files now live in ' + $Target + '. Outlook uses them the same way as before.')
+        return $true
+    } catch {
+        Write-Skip ('Move stopped: ' + $_.Exception.Message)
+        return $false
+    }
+}
+function Invoke-OutlookMoveToOtherDrive {
+    Write-Header 'MOVE OUTLOOK MAIL FILES TO THE OTHER DRIVE'
+    $profile = Get-InteractiveProfile
+    $src = Get-OutlookDataFolder $profile
+    if (-not $src -or -not (Test-Path -LiteralPath $src)) { Write-Skip 'Outlook mail folder not found on this PC.'; return }
+    $already = Get-FolderLinkTarget $src
+    if ($already) { Write-Host ('Already done on this PC: mail files are in ' + $already + '. Nothing to do.') -ForegroundColor Green; return }
+    $size = Get-FolderSizeBytes $src
+    $sizeGB = [math]::Round($size / 1GB, 1)
+    $drive = Find-MailTargetDrive $size
+    if (-not $drive.Letter) {
+        Write-Skip ('No other drive on this PC can take the mail files (' + $sizeGB + ' GB needed).')
+        foreach ($n in @($drive.Notes)) { Write-Note $n }
+        Write-Host 'Nothing was changed. Tell IT.' -ForegroundColor Yellow
+        return
+    }
+    $target = $drive.Letter + ':\Outlook_Data\Outlook'
+    if ((Test-Path -LiteralPath $target) -and @(Get-ChildItem -LiteralPath $target -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+        $target = $drive.Letter + ':\Outlook_Data\' + (Split-Path -Leaf $profile.LocalPath) + '\Outlook'
+    }
+    $minutes = [math]::Max(5, [int]($sizeGB / 3))
+    if (-not (Confirm-Action ('Moves the Outlook mail files (' + $sizeGB + ' GB) from C: to ' + $target + ' and frees that space on C:. Outlook will be closed and opened again.') 'All emails, folders, accounts and passwords. Every file is copied and checked before the old one is removed.' 'An email you are still writing. Outlook cannot be used until this finishes.' ('About ' + $minutes + ' minutes. Do not turn off the PC.'))) { return }
+    if (-not (Close-AppRobust -ProcessName 'OUTLOOK' -AppLabel 'Outlook' -ForceWarning 'An email you are still writing may be lost.')) { return }
+    Start-Sleep -Seconds 3
+    if (@(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Skip 'Outlook is still open (maybe for another user). Nothing was changed.'; return }
+    $before = Get-CFreeGB
+    $searchWasRunning = $false
+    try { $ws = Get-Service -Name 'WSearch' -ErrorAction Stop; if ($ws.Status -eq 'Running') { $searchWasRunning = $true; Stop-Service -Name 'WSearch' -Force -ErrorAction Stop } } catch {}
+    $ok = $false
+    try { $ok = Move-FolderBehindJunction -Source $src -Target $target -OwnerSid ([string]$profile.SID) }
+    finally { if ($searchWasRunning) { try { Start-Service -Name 'WSearch' -ErrorAction Stop } catch {} } }
+    if ($ok) {
+        $after = Get-CFreeGB
+        Write-Host ('C: drive free space: ' + $after + ' GB (was ' + $before + ' GB).') -ForegroundColor Green
+        try { Send-PcReport -Force } catch {}
+    }
+    $exe = Find-OutlookExe
+    if ($exe) { try { [void](Start-UserProgram -Path $exe); Write-Done 'Outlook opened again.' } catch { Write-Skip ('Open Outlook from the Start menu: ' + $_.Exception.Message) } }
+}
 function Show-InternetMenu {
     while ($true) {
         Clear-Host
@@ -4354,6 +4488,7 @@ function Show-OutlookMenu {
         Write-Host '  6. Folders on the left look wrong [Reset the folder panel]' -ForegroundColor Green
         Write-Host '  7. Old reminders keep popping up [Clear reminders]' -ForegroundColor Green
         Write-Host '  8. Outlook shows a data file error [Repair mail file - 10-60 min]' -ForegroundColor Yellow
+        Write-Host '  9. C: drive is full              [Move mail files to the other drive - 30-90 min]' -ForegroundColor Yellow
         Write-Host '  0. Back'
         switch (Read-MenuChoice) {
             '1' { Invoke-OutlookFullFix; Wait-Back }
@@ -4363,6 +4498,7 @@ function Show-OutlookMenu {
             '5' { Invoke-SearchRebuild; Wait-Back }
             '6' { Show-ActionInfo 'Resets the folder panel on the left side of Outlook.' 'All emails, folders and accounts.' 'Your custom folder order and Favorites list.' 'About 1 minute.'; Invoke-OutlookAction 'Nav'; Wait-Back }
             '7' { Invoke-OutlookCleanReminders; Wait-Back }
+            '9' { Invoke-OutlookMoveToOtherDrive; Wait-Back }
             '8' { Show-ActionInfo 'Backs up and repairs the Outlook mail file.' 'A backup copy is made first. Emails on the server stay.' 'Outlook cannot be used while it runs.' '10-60 minutes.'; Invoke-OutlookDataFileRepair; Wait-Back }
             '0' { return }
             default { Write-Host 'Choose a number from the list.' -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
