@@ -175,7 +175,7 @@
         })(r.load) +
         '<td class="' + cls(m.freeGB >= 2, m.freeGB >= 1) + '">' + num(m.freeGB) + ' / ' + num(m.totalGB, 0) + ' GB</td>' +
         '<td class="' + (c ? cls(c.freeGB >= 25, c.freeGB >= 15) : '') + '">' + (c ? num(c.freeGB, 0) + ' GB' : '-') + '</td>' +
-        '<td>' + num(((r.outlook || {}).totalMB || 0) / 1024) + ' GB</td>' +
+        '<td>' + num(((r.outlook || {}).totalMB || 0) / 1024) + ' GB<div class="muted">' + ((r.outlook || {}).linkedTo ? 'on ' + esc(String(r.outlook.linkedTo).slice(0, 2)) : 'on C:') + '</div></td>' +
         (function (vb) {
           if (!vb || !vb.installed) return '<td class="muted">-</td>';
           var data = (vb.dataMB || 0) / 1024;
@@ -312,7 +312,7 @@
           }))]
         ]);
       })(r.viberHangs) +
-      '<h3>Outlook</h3>' + kv([['Version', esc(ol.version)], ['Offline months per account', list((ol.accounts || []).map(function (x) { return esc(x.account) + ' - <span class="' + (x.offlineMonths === 'All' ? 'ok' : 'warn') + '">' + esc(x.offlineMonths) + (x.offlineMonths === 'All' ? '' : ' months') + '</span>'; }))], ['Mail files', list((ol.mailFiles || []).map(function (x) { return esc(x.name) + ' - ' + esc(x.mb) + ' MB'; }))]]) +
+      '<h3>Outlook</h3>' + kv([['Version', esc(ol.version)], ['Mail files are on', ol.linkedTo ? '<span class="ok">' + esc(ol.linkedTo) + '</span> (linked from C:)' : 'C: drive (not moved)'], ['Offline months per account', list((ol.accounts || []).map(function (x) { return esc(x.account) + ' - <span class="' + (x.offlineMonths === 'All' ? 'ok' : 'warn') + '">' + esc(x.offlineMonths) + (x.offlineMonths === 'All' ? '' : ' months') + '</span>'; }))], ['Mail files', list((ol.mailFiles || []).map(function (x) { return esc(x.name) + ' - ' + esc(x.mb) + ' MB'; }))]]) +
       '<h3>Blue screens and sudden restarts (30 days)</h3>' + list((cr.lastBlueScreens || []).map(function (x) { return bdTime(x.time) + ' - Event ' + esc(x.id) + ' ' + esc(x.msg); })) +
       '<h3>App crashes (7 days)</h3>' + list((cr.appCrashes7d || []).map(function (x) { return esc(x.app) + ' - ' + esc(x.count) + 'x'; })) +
       '<h3>Startup</h3>' + kv([
