@@ -1,15 +1,15 @@
 {
-    "build":  25,
-    "published":  "2026-11-14T09:59:19Z",
-    "notes":  "Guardian on RR823, MN822, JA326 until 21:00 BD: frees RAM, calms a background CPU hog, restarts a frozen taskbar, reopen",
+    "build":  26,
+    "published":  "2026-11-14T10:04:02Z",
+    "notes":  "Guardian also on SM1022 (PC-36) and HD1022 until 21:00 BD",
     "files":  [
                   {
                       "name":  "PC-Care-Toolkit.bat",
-                      "sha256":  "6995fd5d0aa3f3fd848ca1c1b9e75718233a0729216821236a003b3f5f6a3fcc"
+                      "sha256":  "688f0e8aac04d36c88604a84a699e8ac3401dc4e1c7b22a855b05edb6cd8a8d1"
                   },
                   {
                       "name":  "config.json",
-                      "sha256":  "60ac8ff8a3b3afb7fde278bd60320661335b6c56d8dee26d9476bb54c750ba2a"
+                      "sha256":  "312d01d62f41578be8cc356046e94abaa00de2ac085d79bde399f689c2ef1883"
                   }
               ]
 }

@@ -123,5 +123,10 @@
         "build":  25,
         "published":  "2026-11-14T09:59:19Z",
         "notes":  "Guardian on RR823, MN822, JA326 until 21:00 BD: frees RAM, calms a background CPU hog, restarts a frozen taskbar, reopen"
+    },
+    {
+        "build":  26,
+        "published":  "2026-11-14T10:04:02Z",
+        "notes":  "Guardian also on SM1022 (PC-36) and HD1022 until 21:00 BD"
     }
 ]
